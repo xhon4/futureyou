@@ -1,0 +1,32 @@
+# Internal documentation (README.md stays tracked)
+/PLAN.md
+/docs/
+
+# AI assistants and agent tooling
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.codex/
+.gemini/
+.opencode/
+.pi/
+.atl/
+odd/
+.github/copilot-instructions.md
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Secrets
+.env
