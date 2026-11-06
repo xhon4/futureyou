@@ -24,7 +24,7 @@ must be stored and validated server-side, and a local change that stores a
 session token in `localStorage`:
 
 ```bash
-futureyou review .
+uv run futureyou review .
 ```
 
 ```text
@@ -32,18 +32,20 @@ FutureYou Report
 
 1 concern
 
-Architectural contradiction
-The new authentication code persists session tokens in localStorage,
-contradicting the server-side session policy.
+[Contradiction] Session token stored on client
+Why: The new code persists session tokens in localStorage, contradicting
+     the server-side session policy.
+Change: src/auth.ts:24-28
+Decision: docs/adr/003-authentication.md:12-17
+Suggestion: Keep server-managed sessions or explicitly revise ADR-003
+            if the architecture has changed.
 
-EVIDENCE
-  src/auth.ts — added lines 24–28
-  docs/adr/003-authentication.md — lines 12–17
-
-RECOMMENDATION
-  Preserve server-managed sessions or explicitly revise ADR-003
-  if the architecture has changed.
+Review scope: tracked changes against HEAD; no truncation.
 ```
+
+The report lists at most five observations. If there are no ADRs, no
+matches or the diff was truncated, the report says so instead of presenting
+the review as complete.
 
 Every finding falls into one of three types:
 
@@ -58,12 +60,21 @@ FutureYou must not invent criticism to look useful.
 ## Usage
 
 ```bash
-# First review, stored under a thread
-futureyou review . --thread auth-review
+# Review with a generated thread ID (printed on screen)
+uv run futureyou review .
+
+# Review under a named thread
+uv run futureyou review . --thread auth-review
 
 # Follow-up question, even after closing the terminal
-futureyou ask --thread auth-review "What would you change first?"
+uv run futureyou ask --thread auth-review "What should I change first?"
 ```
+
+- Every `review` starts a new session. Reusing an existing thread name fails
+  instead of mixing two reviews.
+- `ask` requires an existing thread. It answers from the saved conversation,
+  not from the current code: it calls no tools and does not read the
+  repository again. Run a new `review` to see newer changes.
 
 ## Architecture
 
@@ -102,13 +113,20 @@ SQLite checkpointer — thread_id
 - **Untrusted content.** The diff and the ADRs are data, not instructions.
 - **Evidence required.** A contradiction cites both the change and the rule. If
   the evidence is not enough, the report says so.
+- **Local state is sensitive too.** Checkpoints store diffs and ADR excerpts
+  in the local SQLite database.
 - **Privacy.** The analyzed code is sent to the model provider. Do not run it on
   repositories with secrets or sensitive data without reviewing the diff first.
 
 ## Known limitations
 
 - Untracked files do not appear in `git diff HEAD`.
-- Only local repositories, Markdown ADRs and size-limited diffs.
+- Only local repositories with at least one commit, Markdown ADRs under
+  `docs/adr/` and diffs up to 60,000 characters.
+- Evidence pointers are produced by the model. Tests verify the flow, but
+  nothing automatically verifies that each citation is semantically correct.
+- Reading the diff before concluding is required by the prompt, not enforced
+  by the graph: a real model could skip it.
 - Deterministic tests prove the software works; they do not prove an LLM will
   catch every architectural problem.
 
