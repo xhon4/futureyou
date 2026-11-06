@@ -139,3 +139,7 @@ repair, metrics dashboards, plugins, and a custom multi-provider layer.
 ## Tech stack
 
 Python, uv, LangGraph, LangChain tool calling, SQLite checkpoints, pytest.
+
+## License
+
+[MIT](LICENSE)
