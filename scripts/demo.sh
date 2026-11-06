@@ -16,7 +16,7 @@ cp -R "$root/examples/sample-change/." "$repo"
 
 thread="demo-$(date +%s)"
 echo "$ git diff --stat"
-git -C "$repo" diff --stat
+git -C "$repo" --no-pager diff --stat
 echo
 echo "$ futureyou review <sample-project> --thread $thread"
 uv run --project "$root" futureyou review "$repo" --thread "$thread"
