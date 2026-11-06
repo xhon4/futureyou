@@ -106,3 +106,90 @@ def test_ask_requires_an_existing_thread(models, capsys):
     assert out == ""
     assert err == "futureyou: thread 'missing' does not exist; run futureyou review first\n"
     assert created == []
+
+
+def _snapshot(repo: Path) -> dict:
+    return {p.relative_to(repo).as_posix(): p.read_bytes() for p in sorted(repo.rglob("*")) if p.is_file()}
+
+
+def test_review_routes_tools_and_reports_the_known_contradiction(models, contradicting_repo: Path, capsys):
+    queue, created = models
+    queue.append(review_replies())
+    before = _snapshot(contradicting_repo)
+
+    assert cli.main(["review", str(contradicting_repo), "--thread", "known"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.startswith("FutureYou Report\n\n" + REPORT + "\n\n")
+    assert "Review scope: tracked changes against HEAD; no truncation; ADRs searched.\n" in out
+    final_input = created[0].seen[-1]
+    diff, adrs = [m for m in final_input if isinstance(m, ToolMessage)]
+    assert "+  localStorage.setItem(TOKEN_KEY, token);" in diff.content
+    assert "docs/adr/003-authentication.md" in adrs.content
+    assert _snapshot(contradicting_repo) == before
+
+
+def test_review_without_changes_does_not_search_or_invent(models, sample_repo: Path, capsys):
+    queue, _ = models
+    queue.append([
+        AIMessage("", tool_calls=[{"name": "get_git_diff", "args": {}, "id": "call-1"}]),
+        AIMessage("No concerns"),
+    ])
+
+    assert cli.main(["review", str(sample_repo)]) == 0
+
+    out = capsys.readouterr().out
+    assert "No concerns\n" in out
+    assert "Review scope: no tracked changes against HEAD; ADRs not searched.\n" in out
+
+
+def test_review_without_adrs_reports_the_limitation(models, contradicting_repo: Path, capsys):
+    for adr in (contradicting_repo / "docs" / "adr").iterdir():
+        adr.unlink()
+    queue, _ = models
+    queue.append(review_replies())
+
+    assert cli.main(["review", str(contradicting_repo)]) == 0
+
+    assert "Review scope: tracked changes against HEAD; no truncation; no ADRs in docs/adr/.\n" in capsys.readouterr().out
+
+
+def test_review_scope_reports_truncation(models, monkeypatch, contradicting_repo: Path, capsys):
+    monkeypatch.setattr(agent.tools, "MAX_DIFF_CHARS", 200)
+    queue, _ = models
+    queue.append(review_replies())
+
+    assert cli.main(["review", str(contradicting_repo)]) == 0
+
+    assert "Review scope: tracked changes against HEAD; diff truncated at 200 characters; ADRs searched.\n" in (
+        capsys.readouterr().out
+    )
+
+
+def test_review_stops_at_the_recursion_limit(models, contradicting_repo: Path, capsys):
+    queue, _ = models
+    queue.append([
+        AIMessage("", tool_calls=[{"name": "get_git_diff", "args": {}, "id": f"call-{i}"}]) for i in range(20)
+    ])
+
+    assert cli.main(["review", str(contradicting_repo)]) == 1
+
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == f"futureyou: the review stopped after {agent.RECURSION_LIMIT} steps without a report\n"
+
+
+def test_provider_errors_are_reported_without_traceback(monkeypatch, tmp_path: Path, contradicting_repo: Path, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    class FailingModel(ScriptedModel):
+        def invoke(self, messages, *args, **kwargs):
+            raise PermissionError("invalid API key")
+
+    monkeypatch.setattr(agent, "load_model", lambda: FailingModel(messages=iter([])))
+
+    assert cli.main(["review", str(contradicting_repo)]) == 1
+
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == "futureyou: model call failed: PermissionError: invalid API key\n"
