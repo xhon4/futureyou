@@ -1,9 +1,10 @@
-"""Command line entry point: `futureyou review PATH`."""
+"""Command line entry point: `futureyou review PATH` and `futureyou ask --thread ID QUESTION`."""
 
 import argparse
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 # Restrict checkpoint deserialization to known types (GHSA-g48c-2wqr-h844).
@@ -11,11 +12,31 @@ from pathlib import Path
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
 from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage  # noqa: E402
+from langgraph.checkpoint.sqlite import SqliteSaver  # noqa: E402
 from langgraph.errors import GraphRecursionError  # noqa: E402
 
 from futureyou import agent, tools  # noqa: E402
 
 REVIEW_REQUEST = "Review the local changes of this repository."
+
+
+class ThreadError(Exception):
+    """The requested thread cannot be used for this command."""
+
+
+def checkpoint_path() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
+    return Path(data_home).expanduser() / "futureyou" / "checkpoints.sqlite"
+
+
+def _open_checkpoints():
+    path = checkpoint_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSaver.from_conn_string(str(path))
+
+
+def _config(thread: str) -> dict:
+    return {"configurable": {"thread_id": thread}, "recursion_limit": agent.RECURSION_LIMIT}
 
 
 def _tool_results(messages: list[BaseMessage], name: str) -> list[dict]:
@@ -57,16 +78,34 @@ def review_scope(messages: list[BaseMessage]) -> str:
     return f"Review scope: {diff_scope}; {adr_scope}."
 
 
-def review(path: Path) -> int:
+def review(path: Path, thread: str | None) -> int:
     repo_root = tools.resolve_repo(path)
-    graph = agent.build_graph(agent.load_model(), repo_root)
-    state = graph.invoke(
-        {"messages": [HumanMessage(REVIEW_REQUEST)], "mode": "review", "repo_root": str(repo_root)},
-        {"recursion_limit": agent.RECURSION_LIMIT},
-    )
+    thread = thread or uuid.uuid4().hex[:8]
+    with _open_checkpoints() as checkpoints:
+        if checkpoints.get_tuple(_config(thread)) is not None:
+            raise ThreadError(f"thread '{thread}' already exists; use another --thread")
+        graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
+        state = graph.invoke(
+            {"messages": [HumanMessage(REVIEW_REQUEST)], "mode": "review", "repo_root": str(repo_root)},
+            _config(thread),
+        )
     print("FutureYou Report\n")
     print(state["messages"][-1].text.strip())
     print(f"\n{review_scope(state['messages'])}")
+    print(f"Thread: {thread}")
+    return 0
+
+
+def ask(thread: str, question: str) -> int:
+    with _open_checkpoints() as checkpoints:
+        saved = checkpoints.get_tuple(_config(thread))
+        if saved is None:
+            raise ThreadError(f"thread '{thread}' does not exist; run futureyou review first")
+        # Tools are never routed in ask mode; the graph only needs the reviewed root to compile.
+        repo_root = Path(saved.checkpoint["channel_values"]["repo_root"])
+        graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
+        state = graph.invoke({"messages": [HumanMessage(question)], "mode": "ask"}, _config(thread))
+    print(state["messages"][-1].text.strip())
     return 0
 
 
@@ -80,11 +119,22 @@ def main(argv: list[str] | None = None) -> int:
         "review", help="review staged and unstaged changes to tracked files against HEAD"
     )
     review_parser.add_argument("path", type=Path, help="path inside the Git repository to review")
+    review_parser.add_argument("--thread", help="name for this review session (default: a generated ID)")
+    ask_parser = commands.add_parser(
+        "ask",
+        help="ask a follow-up question about a saved review",
+        description="Answer from the saved review conversation. It does not read the current code; "
+        "run a new review to see newer changes.",
+    )
+    ask_parser.add_argument("--thread", required=True, help="thread of a previous review")
+    ask_parser.add_argument("question", help="follow-up question about that review")
     args = parser.parse_args(argv)
 
     try:
-        return review(args.path)
-    except (tools.RepoError, agent.ConfigError) as error:
+        if args.command == "review":
+            return review(args.path, args.thread)
+        return ask(args.thread, args.question)
+    except (tools.RepoError, agent.ConfigError, ThreadError) as error:
         print(f"futureyou: {error}", file=sys.stderr)
     except GraphRecursionError:
         print(f"futureyou: the review stopped after {agent.RECURSION_LIMIT} steps without a report", file=sys.stderr)
