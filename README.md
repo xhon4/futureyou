@@ -8,7 +8,8 @@ architecture decisions (ADRs) and reports evidence-backed observations.
 It is not a full audit system. It is a small, working LangGraph agent with two
 tools, persistent state and deterministic tests.
 
-> **Status:** design phase. No code yet.
+> **Status:** V0.1. Working CLI with deterministic tests; real-model output
+> below is illustrative until the first recorded demo run.
 
 ## The problem
 
@@ -35,12 +36,13 @@ FutureYou Report
 [Contradiction] Session token stored on client
 Why: The new code persists session tokens in localStorage, contradicting
      the server-side session policy.
-Change: src/auth.ts:24-28
-Decision: docs/adr/003-authentication.md:12-17
+Change: src/auth.ts:17-18
+Decision: docs/adr/003-authentication.md:14-16
 Suggestion: Keep server-managed sessions or explicitly revise ADR-003
             if the architecture has changed.
 
-Review scope: tracked changes against HEAD; no truncation.
+Review scope: tracked changes against HEAD; no truncation; ADRs searched.
+Thread: 3f9c2a1b
 ```
 
 The report lists at most five observations. If there are no ADRs, no
@@ -56,6 +58,30 @@ Every finding falls into one of three types:
 | No concerns | Nothing relevant found. This is a valid outcome. |
 
 FutureYou must not invent criticism to look useful.
+
+## Quick start
+
+Requirements: Git, [uv](https://docs.astral.sh/uv/) and an OpenAI API key.
+
+```bash
+git clone <repository-url> futureyou
+cd futureyou
+uv sync
+
+# FutureYou does not load .env files: export the variables in your shell.
+export FUTUREYOU_MODEL=openai:gpt-4.1-mini
+export OPENAI_API_KEY=sk-...
+
+scripts/demo.sh
+```
+
+`scripts/demo.sh` copies `examples/sample-project` to a temporary directory,
+commits it, applies the change in `examples/sample-change` (a session token in
+`localStorage`, against ADR-003), runs `review` and a follow-up `ask`, and
+deletes the copy. Your own clone is never modified.
+
+`FUTUREYOU_MODEL` takes any `provider:model` string supported by LangChain's
+`init_chat_model`; only the OpenAI integration is installed.
 
 ## Usage
 
@@ -118,6 +144,15 @@ SQLite checkpointer — thread_id
 - **Privacy.** The analyzed code is sent to the model provider. Do not run it on
   repositories with secrets or sensitive data without reviewing the diff first.
 
+## Tests
+
+```bash
+uv run pytest
+```
+
+The suite uses simulated models: no network, no API key, no tokens spent.
+It runs on every push through GitHub Actions.
+
 ## Known limitations
 
 - Untracked files do not appear in `git diff HEAD`.
@@ -129,6 +164,8 @@ SQLite checkpointer — thread_id
   by the graph: a real model could skip it.
 - Deterministic tests prove the software works; they do not prove an LLM will
   catch every architectural problem.
+- Results depend on the model: the same change can produce different wording
+  or line ranges across runs.
 
 ## Out of scope for V0.1
 
