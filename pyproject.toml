@@ -1,6 +1,6 @@
 [project]
 name = "futureyou"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reviews local Git changes against documented architecture decisions"
 authors = [
     { name = "xhon4", email = "ignaciolafuente999@gmail.com" }

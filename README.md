@@ -8,8 +8,9 @@ architecture decisions (ADRs) and reports evidence-backed observations.
 It is not a full audit system. It is a small, working LangGraph agent with two
 tools, persistent state and deterministic tests.
 
-> **Status:** V0.1. Working CLI with deterministic tests; real-model output
-> below is illustrative until the first recorded demo run.
+> **Status:** v0.2 "Reliable Reviews". The graph always reads the diff,
+> untracked files are reviewed, and every citation is checked against the
+> evidence actually read.
 
 ## The problem
 
@@ -185,7 +186,7 @@ It runs on every push through GitHub Actions.
 - Results depend on the model: the same change can produce different wording
   or line ranges across runs.
 
-## Out of scope for V0.1
+## Out of scope
 
 Web UI, GitHub App or automatic PR review, multiple agents, RAG or vector
 databases, Jira/Linear integration, long-term semantic memory, automatic code
