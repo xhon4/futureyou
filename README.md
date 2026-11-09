@@ -41,7 +41,7 @@ Change: src/auth.ts:8-28
 Decision: docs/adr/003-authentication.md:13-21
 Suggestion: Revert to relying on the server-set HttpOnly, Secure session cookie and drop the localStorage token handling in `login`, `getToken`, and `logout`.
 
-Review scope: tracked changes against HEAD; no truncation; ADRs searched.
+Review scope: changes against HEAD, untracked files included; no truncation; ADRs searched.
 Thread: demo-1794249997
 ```
 
@@ -137,9 +137,10 @@ SQLite checkpointer — thread_id
 - **Guaranteed diff:** the `read_diff` node reads the diff before the model
   runs. If Git fails, the review stops with an error; if there are no changes,
   the CLI prints "No concerns" without calling the model.
-- **`get_git_diff`:** runs `git diff HEAD` (staged and unstaged changes to
-  tracked files), with file names and line references. Output is size-limited
-  and truncation is reported explicitly.
+- **`get_git_diff`:** reads staged and unstaged tracked changes against HEAD,
+  plus up to 200 non-ignored untracked files, without modifying the index.
+  Binary content and untracked symlinks are omitted. Output is size-limited;
+  truncation and files skipped over the limit are reported explicitly.
 - **`search_decisions`:** term matching over the Markdown files in `docs/adr/`,
   returning snippets with file and line references. No embeddings, vector
   stores or external services. A repository without ADRs is reported as such.
@@ -171,7 +172,8 @@ It runs on every push through GitHub Actions.
 
 ## Known limitations
 
-- Untracked files do not appear in `git diff HEAD`.
+- Untracked symlinks and binary file contents are omitted; at most 200
+  non-ignored untracked files are read per review.
 - Only local repositories with at least one commit, Markdown ADRs under
   `docs/adr/` and diffs up to 60,000 characters.
 - Evidence pointers are produced by the model. Tests verify the flow, but

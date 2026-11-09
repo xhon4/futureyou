@@ -120,7 +120,7 @@ def test_review_routes_tools_and_reports_the_known_contradiction(models, contrad
 
     out = capsys.readouterr().out
     assert out.startswith("FutureYou Report\n\n" + REPORT + "\n\n")
-    assert "Review scope: tracked changes against HEAD; no truncation; ADRs searched.\n" in out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; ADRs searched.\n" in out
     final_input = created[0].seen[-1]
     diff, adrs = [m for m in final_input if isinstance(m, ToolMessage)]
     assert "+  localStorage.setItem(TOKEN_KEY, token);" in diff.content
@@ -136,7 +136,7 @@ def test_review_without_changes_answers_without_the_model(models, sample_repo: P
 
     assert capsys.readouterr().out == (
         "FutureYou Report\n\nNo concerns\n\n"
-        "Review scope: no tracked changes against HEAD; ADRs not searched.\nThread: clean\n"
+        "Review scope: no changes against HEAD; ADRs not searched.\nThread: clean\n"
     )
     assert created[0].seen == []
 
@@ -149,7 +149,7 @@ def test_review_reads_the_diff_before_the_model_even_if_it_never_asks(models, co
 
     out = capsys.readouterr().out
     assert REPORT in out
-    assert "Review scope: tracked changes against HEAD; no truncation; ADRs not searched.\n" in out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; ADRs not searched.\n" in out
     (diff,) = [m for m in created[0].seen[0] if isinstance(m, ToolMessage)]
     assert diff.name == "get_git_diff"
     assert "+  localStorage.setItem(TOKEN_KEY, token);" in diff.content
@@ -176,7 +176,7 @@ def test_review_without_adrs_reports_the_limitation(models, contradicting_repo: 
 
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
-    assert "Review scope: tracked changes against HEAD; no truncation; no ADRs in docs/adr/.\n" in capsys.readouterr().out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; no ADRs in docs/adr/.\n" in capsys.readouterr().out
 
 
 def test_review_scope_reports_truncation(models, monkeypatch, contradicting_repo: Path, capsys):
@@ -186,9 +186,22 @@ def test_review_scope_reports_truncation(models, monkeypatch, contradicting_repo
 
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
-    assert "Review scope: tracked changes against HEAD; diff truncated at 200 characters; ADRs searched.\n" in (
+    assert "Review scope: changes against HEAD, untracked files included; diff truncated at 200 characters; ADRs searched.\n" in (
         capsys.readouterr().out
     )
+
+
+def test_review_scope_reports_untracked_cap(models, monkeypatch, sample_repo: Path, capsys):
+    monkeypatch.setattr(agent.tools, "MAX_UNTRACKED_FILES", 1, raising=False)
+    (sample_repo / "a.txt").write_text("first\n")
+    (sample_repo / "b.txt").write_text("second\n")
+    queue, _ = models
+    queue.append([AIMessage(REPORT)])
+
+    assert cli.main(["review", str(sample_repo), "--thread", "cap"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; 1 untracked files over the 1-file limit not read; ADRs not searched.\n" in out
 
 
 def test_review_stops_at_the_recursion_limit(models, contradicting_repo: Path, capsys):

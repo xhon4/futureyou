@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 MAX_DIFF_CHARS = 60_000
+MAX_UNTRACKED_FILES = 200
 MAX_ADR_FILES = 100
 MAX_ADR_BYTES = 64 * 1024
 MAX_FRAGMENTS = 5
@@ -42,18 +43,27 @@ def resolve_repo(path: Path) -> Path:
 
 
 def git_diff(repo_root: Path) -> dict:
-    """Staged and unstaged changes to tracked files against HEAD."""
+    """Changes against HEAD, including non-ignored untracked files, without modifying the index."""
     result = _git(repo_root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD")
     if result.returncode != 0:
         return {"status": "error", "message": result.stderr.strip()}
     diff = result.stdout
-    if not diff:
-        return {"status": "no_changes", "diff": "", "truncated": False}
+    listing = _git(repo_root, "ls-files", "--others", "--exclude-standard", "-z")
+    if listing.returncode != 0:
+        return {"status": "error", "message": listing.stderr.strip()}
+    files = [name for name in listing.stdout.split("\0") if name and not (repo_root / name).is_symlink()]
+    included = files[:MAX_UNTRACKED_FILES]
+    for name in included:
+        result = _git(repo_root, "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", "--", "/dev/null", name)
+        if result.returncode not in (0, 1):
+            return {"status": "error", "message": result.stderr.strip()}
+        diff += result.stdout
     truncated = len(diff) > MAX_DIFF_CHARS
     if truncated:
         cut = diff.rfind("\n", 0, MAX_DIFF_CHARS) + 1
         diff = diff[: cut or MAX_DIFF_CHARS]
-    return {"status": "ok", "diff": diff, "truncated": truncated}
+    return {"status": "ok" if diff or files else "no_changes", "diff": diff, "truncated": truncated,
+            "untracked": len(included), "untracked_skipped": len(files) - len(included)}
 
 
 def _adr_status(lines: list[str]) -> str:

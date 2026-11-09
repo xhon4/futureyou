@@ -45,7 +45,7 @@ def build_tools(repo_root: Path) -> list:
 
     @tool
     def get_git_diff() -> dict:
-        """Return the staged and unstaged changes to tracked files against HEAD."""
+        """Return changes against HEAD, including non-ignored untracked files."""
         return tools.git_diff(repo_root)
 
     @tool

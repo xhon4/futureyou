@@ -56,13 +56,15 @@ def review_scope(messages: list[BaseMessage]) -> str:
     if not diffs:
         diff_scope = "diff not read"
     elif diffs[-1].get("status") == "no_changes":
-        diff_scope = "no tracked changes against HEAD"
+        diff_scope = "no changes against HEAD"
     elif diffs[-1].get("status") != "ok":
         diff_scope = "Git diff failed"
     elif diffs[-1].get("truncated"):
-        diff_scope = f"tracked changes against HEAD; diff truncated at {tools.MAX_DIFF_CHARS:,} characters"
+        diff_scope = f"changes against HEAD, untracked files included; diff truncated at {tools.MAX_DIFF_CHARS:,} characters"
     else:
-        diff_scope = "tracked changes against HEAD; no truncation"
+        diff_scope = "changes against HEAD, untracked files included; no truncation"
+    if diffs and diffs[-1].get("untracked_skipped", 0):
+        diff_scope += f"; {diffs[-1]['untracked_skipped']} untracked files over the {tools.MAX_UNTRACKED_FILES}-file limit not read"
 
     statuses = {result.get("status") for result in _tool_results(messages, "search_decisions")}
     if not statuses:
@@ -119,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     review_parser = commands.add_parser(
-        "review", help="review staged and unstaged changes to tracked files against HEAD"
+        "review", help="review changes against HEAD, including non-ignored untracked files"
     )
     review_parser.add_argument("path", type=Path, help="path inside the Git repository to review")
     review_parser.add_argument("--thread", help="name for this review session (default: a generated ID)")
