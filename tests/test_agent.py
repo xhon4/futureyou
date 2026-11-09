@@ -4,14 +4,16 @@ import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 
-from futureyou import agent, cli
+from futureyou import agent, cli, report
+
+FINDING = dict(type="Contradiction", title="Session token stored on client", why="The change persists the session token in localStorage.", change_path="src/auth.ts", change_start=17, change_end=18, decision_path="docs/adr/003-authentication.md", decision_start=15, decision_end=17, suggestion="Keep server-managed sessions or revise ADR-003.")
 
 REPORT = (
-    "1 concern\n\n"
+    "1 concern(s)\n\n"
     "[Contradiction] Session token stored on client\n"
     "Why: The change persists the session token in localStorage.\n"
-    "Change: src/auth.ts:8-25\n"
-    "Decision: docs/adr/003-authentication.md:13-17\n"
+    "Change: src/auth.ts:17-18\n"
+    "Decision: docs/adr/003-authentication.md:15-17\n"
     "Suggestion: Keep server-managed sessions or revise ADR-003."
 )
 
@@ -20,9 +22,17 @@ class ScriptedModel(GenericFakeChatModel):
     """Fake chat model that supports bind_tools and records what it was sent."""
 
     seen: list = []
+    structured: list = []
 
     def bind_tools(self, tools, **kwargs):
         return self
+
+    def with_structured_output(self, schema, **kwargs):
+        from langchain_core.runnables import RunnableLambda
+        def respond(messages):
+            self.seen.append(list(messages))
+            return self.structured.pop(0)
+        return RunnableLambda(respond)
 
     def invoke(self, messages, *args, **kwargs):
         self.seen.append(list(messages))
@@ -37,7 +47,10 @@ def models(monkeypatch, tmp_path: Path):
     queue: list[list[AIMessage]] = []
 
     def load_model():
-        model = ScriptedModel(messages=iter(queue.pop(0)), seen=[])
+        replies = queue.pop(0)
+        structured = [item for item in replies if isinstance(item, report.Report)]
+        model = ScriptedModel(messages=iter(item for item in replies if isinstance(item, AIMessage)), seen=[],
+                              structured=structured or [report.Report(findings=[report.Finding(**FINDING)])])
         created.append(model)
         return model
 
@@ -68,6 +81,7 @@ def test_ask_recovers_the_review_after_reopening_sqlite(models, contradicting_re
     tool_names = [m.name for m in ask_input if isinstance(m, ToolMessage)]
     assert tool_names == ["get_git_diff", "search_decisions"]
     assert ask_input[-1].content == "What should I change first?"
+    assert ask_input[-2].content == REPORT
     assert (tmp_path / "data" / "futureyou" / "checkpoints.sqlite").is_file()
 
 
@@ -128,6 +142,32 @@ def test_review_routes_tools_and_reports_the_known_contradiction(models, contrad
     assert _snapshot(contradicting_repo) == before
 
 
+@pytest.mark.parametrize(("overrides", "reason"), [
+    ({"change_start": 999, "change_end": 999}, "lines not in the diff"),
+    ({"change_path": "missing"}, "file not in the diff"),
+    ({"decision_path": "missing"}, "ADR not consulted"),
+    ({"decision_start": 999, "decision_end": 999}, "lines not in the consulted ADR excerpts"),
+    ({"decision_path": None, "decision_start": None, "decision_end": None}, "missing decision citation"),
+])
+def test_review_marks_invalid_citations(models, contradicting_repo, capsys, overrides, reason):
+    queue, _ = models
+    queue.append(review_replies() + [report.Report(findings=[report.Finding(**(FINDING | overrides))])])
+    assert cli.main(["review", str(contradicting_repo), "--thread", "invalid"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "[Unverified]" in out and f"✗ {reason}" in out
+    assert "; 1 finding(s) with invalid evidence.\nThread: invalid\n" in out
+
+
+def test_review_empty_structured_findings(models, contradicting_repo, capsys):
+    queue, _ = models
+    queue.append(review_replies() + [report.Report(findings=[])])
+    assert cli.main(["review", str(contradicting_repo), "--thread", "empty"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert out == "FutureYou Report\n\nNo concerns\n\nReview scope: changes against HEAD, untracked files included; no truncation; ADRs searched.\nThread: empty\n"
+
+
 def test_review_without_changes_answers_without_the_model(models, sample_repo: Path, capsys):
     queue, created = models
     queue.append([])
@@ -148,8 +188,9 @@ def test_review_reads_the_diff_before_the_model_even_if_it_never_asks(models, co
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
     out = capsys.readouterr().out
-    assert REPORT in out
-    assert "Review scope: changes against HEAD, untracked files included; no truncation; ADRs not searched.\n" in out
+    assert "[Unverified]" in out
+    assert "ADR not consulted" in out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; ADRs not searched; 1 finding(s) with invalid evidence.\n" in out
     (diff,) = [m for m in created[0].seen[0] if isinstance(m, ToolMessage)]
     assert diff.name == "get_git_diff"
     assert "+  localStorage.setItem(TOKEN_KEY, token);" in diff.content
@@ -176,7 +217,7 @@ def test_review_without_adrs_reports_the_limitation(models, contradicting_repo: 
 
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
-    assert "Review scope: changes against HEAD, untracked files included; no truncation; no ADRs in docs/adr/.\n" in capsys.readouterr().out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; no ADRs in docs/adr/; 1 finding(s) with invalid evidence.\n" in capsys.readouterr().out
 
 
 def test_review_scope_reports_truncation(models, monkeypatch, contradicting_repo: Path, capsys):
@@ -201,7 +242,7 @@ def test_review_scope_reports_untracked_cap(models, monkeypatch, sample_repo: Pa
     assert cli.main(["review", str(sample_repo), "--thread", "cap"]) == 0
     out, err = capsys.readouterr()
     assert err == ""
-    assert "Review scope: changes against HEAD, untracked files included; no truncation; 1 untracked files over the 1-file limit not read; ADRs not searched.\n" in out
+    assert "Review scope: changes against HEAD, untracked files included; no truncation; 1 untracked files over the 1-file limit not read; ADRs not searched; 1 finding(s) with invalid evidence.\n" in out
 
 
 def test_review_stops_at_the_recursion_limit(models, contradicting_repo: Path, capsys):

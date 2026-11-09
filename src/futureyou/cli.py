@@ -1,7 +1,6 @@
 """Command line entry point: `futureyou review PATH` and `futureyou ask --thread ID QUESTION`."""
 
 import argparse
-import json
 import os
 import sys
 import uuid
@@ -11,11 +10,11 @@ from pathlib import Path
 # Must be set before LangGraph is imported.
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
 
-from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.messages import BaseMessage, HumanMessage  # noqa: E402
 from langgraph.checkpoint.sqlite import SqliteSaver  # noqa: E402
 from langgraph.errors import GraphRecursionError  # noqa: E402
 
-from futureyou import agent, tools  # noqa: E402
+from futureyou import agent, report, tools  # noqa: E402
 
 REVIEW_REQUEST = "Review the local changes of this repository."
 
@@ -39,20 +38,9 @@ def _config(thread: str) -> dict:
     return {"configurable": {"thread_id": thread}, "recursion_limit": agent.RECURSION_LIMIT}
 
 
-def _tool_results(messages: list[BaseMessage], name: str) -> list[dict]:
-    results = []
-    for message in messages:
-        if isinstance(message, ToolMessage) and message.name == name:
-            try:
-                results.append(json.loads(message.content))
-            except (TypeError, json.JSONDecodeError):
-                continue
-    return results
-
-
-def review_scope(messages: list[BaseMessage]) -> str:
+def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
     """Describe what the review actually covered, from the real tool results."""
-    diffs = _tool_results(messages, "get_git_diff")
+    diffs = report.tool_results(messages, "get_git_diff")
     if not diffs:
         diff_scope = "diff not read"
     elif diffs[-1].get("status") == "no_changes":
@@ -66,7 +54,7 @@ def review_scope(messages: list[BaseMessage]) -> str:
     if diffs and diffs[-1].get("untracked_skipped", 0):
         diff_scope += f"; {diffs[-1]['untracked_skipped']} untracked files over the {tools.MAX_UNTRACKED_FILES}-file limit not read"
 
-    statuses = {result.get("status") for result in _tool_results(messages, "search_decisions")}
+    statuses = {result.get("status") for result in report.tool_results(messages, "search_decisions")}
     if not statuses:
         adr_scope = "ADRs not searched"
     elif "no_adrs" in statuses:
@@ -77,7 +65,8 @@ def review_scope(messages: list[BaseMessage]) -> str:
         adr_scope = "no matching ADRs"
     else:
         adr_scope = "ADRs searched"
-    return f"Review scope: {diff_scope}; {adr_scope}."
+    invalid = f"; {invalid_evidence} finding(s) with invalid evidence" if invalid_evidence else ""
+    return f"Review scope: {diff_scope}; {adr_scope}{invalid}."
 
 
 def review(path: Path, thread: str | None) -> int:
@@ -91,12 +80,12 @@ def review(path: Path, thread: str | None) -> int:
             {"messages": [HumanMessage(REVIEW_REQUEST)], "mode": "review", "repo_root": str(repo_root)},
             _config(thread),
         )
-    diff = _tool_results(state["messages"], "get_git_diff")[0]
+    diff = report.tool_results(state["messages"], "get_git_diff")[0]
     if diff["status"] == "error":
         raise tools.RepoError(f"could not read the Git diff: {diff['message']}")
     print("FutureYou Report\n")
     print("No concerns" if diff["status"] == "no_changes" else state["messages"][-1].text.strip())
-    print(f"\n{review_scope(state['messages'])}")
+    print(f"\n{review_scope(state['messages'], state.get('invalid_evidence', 0))}")
     print(f"Thread: {thread}")
     return 0
 

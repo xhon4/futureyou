@@ -16,7 +16,7 @@ Process:
 2. Call search_decisions with the key terms of what changed (technologies,
    APIs, concepts). Search more than once if the change touches several
    topics.
-3. Then write the report. Do not call tools after writing it.
+3. Summarize your findings in plain text; a separate step formats them. Do not call tools afterwards.
 
 Rules:
 - Report at most 5 observations, most useful first.
@@ -34,22 +34,15 @@ Rules:
   diff, say that this limits the review.
 - No numeric risk scores.
 
-Output format, plain text, nothing before it:
-
-<N> concern(s)        (or: No concerns)
-
-[Contradiction] <short title>
-Why: <one or two sentences>
-Change: <path>:<start>-<end>
-Decision: <adr path>:<start>-<end>
-Suggestion: <one sentence>
-
-[Potential regret] <short title>
-Why: <one or two sentences, stating it is an inference>
-Change: <path>:<start>-<end>
-Suggestion: <one sentence>
-
 Do not add a review scope line; the CLI adds it."""
+
+REPORT = f"""\
+Turn the review conversation into a structured report of at most five findings.
+{_UNTRUSTED}
+A contradiction must cite a current-policy ADR, not a proposed, deprecated or
+superseded one. A potential regret is an inference grounded in changed code.
+Cite only file paths and line ranges present in the tool results; never invent
+findings or evidence. An empty findings list is valid when there are no concerns."""
 
 ASK = f"""\
 You are FutureYou. You already reviewed a set of Git changes in this

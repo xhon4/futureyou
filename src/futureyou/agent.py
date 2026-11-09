@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from futureyou import prompts, tools
+from futureyou import prompts, report, tools
 
 RECURSION_LIMIT = 12
 # OpenCode Go requires a stable x-opencode-session header; one per process is enough.
@@ -24,6 +24,7 @@ OPENCODE_SESSION = f"ses_{uuid.uuid4().hex}"
 class State(MessagesState):
     mode: Literal["review", "ask"]
     repo_root: str
+    invalid_evidence: int
 
 
 class ConfigError(Exception):
@@ -56,8 +57,10 @@ def build_tools(repo_root: Path) -> list:
     return [get_git_diff, search_decisions]
 
 
-def route(state: State) -> Literal["tools", "__end__"]:
-    return "tools" if state["messages"][-1].tool_calls else END
+def route(state: State) -> Literal["tools", "report", "__end__"]:
+    if state["messages"][-1].tool_calls:
+        return "tools"
+    return "report" if state["mode"] == "review" else END
 
 
 def route_start(state: State) -> Literal["read_diff", "agent"]:
@@ -93,10 +96,20 @@ def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
             ToolMessage(json.dumps(result), tool_call_id=call["id"], name=call["name"]),
         ]}
 
+    def make_report(state: State) -> dict:
+        structured = model.with_structured_output(report.Report).invoke(
+            [SystemMessage(prompts.REPORT), *state["messages"]]
+        )
+        findings = structured.findings[:5]
+        invalid = sum(any(report.validate(finding, state["messages"])) for finding in findings)
+        return {"messages": [AIMessage(report.render(findings, state["messages"]))], "invalid_evidence": invalid}
+
     graph = StateGraph(State)
     graph.add_node("read_diff", read_diff)
     graph.add_node("agent", agent)
     graph.add_node("tools", ToolNode(tool_list))
+    graph.add_node("report", make_report)
+    graph.add_edge("report", END)
     graph.add_conditional_edges(START, route_start)
     graph.add_conditional_edges("read_diff", route_diff)
     graph.add_conditional_edges("agent", route)

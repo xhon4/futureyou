@@ -45,6 +45,8 @@ Review scope: changes against HEAD, untracked files included; no truncation; ADR
 Thread: demo-1794249997
 ```
 
+Findings with invalid or insufficient citations are labeled `[Unverified]`.
+
 The report lists at most five observations. If there are no ADRs, no
 matches or the diff was truncated, the report says so instead of presenting
 the review as complete.
@@ -176,8 +178,8 @@ It runs on every push through GitHub Actions.
   non-ignored untracked files are read per review.
 - Only local repositories with at least one commit, Markdown ADRs under
   `docs/adr/` and diffs up to 60,000 characters.
-- Evidence pointers are produced by the model. Tests verify the flow, but
-  nothing automatically verifies that each citation is semantically correct.
+- Citations are checked against the diff and consulted ADR excerpts; semantic
+  correctness is not verified.
 - Deterministic tests prove the software works; they do not prove an LLM will
   catch every architectural problem.
 - Results depend on the model: the same change can produce different wording
