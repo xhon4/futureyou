@@ -89,8 +89,11 @@ def review(path: Path, thread: str | None) -> int:
             {"messages": [HumanMessage(REVIEW_REQUEST)], "mode": "review", "repo_root": str(repo_root)},
             _config(thread),
         )
+    diff = _tool_results(state["messages"], "get_git_diff")[0]
+    if diff["status"] == "error":
+        raise tools.RepoError(f"could not read the Git diff: {diff['message']}")
     print("FutureYou Report\n")
-    print(state["messages"][-1].text.strip())
+    print("No concerns" if diff["status"] == "no_changes" else state["messages"][-1].text.strip())
     print(f"\n{review_scope(state['messages'])}")
     print(f"Thread: {thread}")
     return 0

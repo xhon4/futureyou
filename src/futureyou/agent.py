@@ -1,5 +1,6 @@
 """The LangGraph review agent: state, tools bound to one repository, and routing."""
 
+import json
 import os
 import uuid
 from pathlib import Path
@@ -8,7 +9,7 @@ from urllib.parse import urlparse
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -59,9 +60,20 @@ def route(state: State) -> Literal["tools", "__end__"]:
     return "tools" if state["messages"][-1].tool_calls else END
 
 
+def route_start(state: State) -> Literal["read_diff", "agent"]:
+    return "read_diff" if state["mode"] == "review" else "agent"
+
+
+def route_diff(state: State) -> Literal["agent", "__end__"]:
+    """Only a readable, non-empty diff reaches the model; the CLI reports the other cases."""
+    return "agent" if json.loads(state["messages"][-1].content)["status"] == "ok" else END
+
+
 def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
     tool_list = build_tools(repo_root)
-    review_model = model.bind_tools(tool_list)
+    get_git_diff, search_decisions = tool_list
+    # The graph reads the diff itself, so the review model can only search the ADRs.
+    review_model = model.bind_tools([search_decisions])
     # Same tools, but never callable: the saved history keeps valid tool messages.
     ask_model = model.bind_tools(tool_list, tool_choice="none")
 
@@ -72,10 +84,21 @@ def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
             chat, instructions = ask_model, prompts.ASK
         return {"messages": [chat.invoke([SystemMessage(instructions), *state["messages"]])]}
 
+    def read_diff(state: State) -> dict:
+        """Read the diff before the model runs, recorded as a regular get_git_diff call."""
+        call = {"name": get_git_diff.name, "args": {}, "id": "read-diff"}
+        result = tools.git_diff(repo_root)
+        return {"messages": [
+            AIMessage("", tool_calls=[call]),
+            ToolMessage(json.dumps(result), tool_call_id=call["id"], name=call["name"]),
+        ]}
+
     graph = StateGraph(State)
+    graph.add_node("read_diff", read_diff)
     graph.add_node("agent", agent)
     graph.add_node("tools", ToolNode(tool_list))
-    graph.add_edge(START, "agent")
+    graph.add_conditional_edges(START, route_start)
+    graph.add_conditional_edges("read_diff", route_diff)
     graph.add_conditional_edges("agent", route)
     graph.add_edge("tools", "agent")
     return graph.compile(checkpointer=checkpointer)

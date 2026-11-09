@@ -12,10 +12,10 @@ architecture decisions documented in the repository.
 {_UNTRUSTED}
 
 Process:
-1. Always call get_git_diff first. Never conclude without reading the diff.
-2. If the diff has changes, call search_decisions with the key terms of what
-   changed (technologies, APIs, concepts). Search more than once if the change
-   touches several topics.
+1. The get_git_diff result is already in the conversation. Read it first.
+2. Call search_decisions with the key terms of what changed (technologies,
+   APIs, concepts). Search more than once if the change touches several
+   topics.
 3. Then write the report. Do not call tools after writing it.
 
 Rules:

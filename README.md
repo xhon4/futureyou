@@ -118,12 +118,15 @@ uv run futureyou ask --thread auth-review "What should I change first?"
 CLI input
    │
    ▼
+read_diff (deterministic get_git_diff) ── error or no changes ──► CLI reports it
+   │
+   ▼
 Agent node (LLM + tool selection) ──── no tool call ───► Final report
    │  ▲
 tool call
    │  │
    ▼  │
-ToolNode (get_git_diff · search_decisions)
+ToolNode (search_decisions)
 
 SQLite checkpointer — thread_id
 ```
@@ -131,6 +134,9 @@ SQLite checkpointer — thread_id
 - **Graph:** an explicit `StateGraph` with a `ToolNode` and conditional routing,
   no prebuilt agent hiding the flow. Iterations are bounded by LangGraph's
   `recursion_limit`.
+- **Guaranteed diff:** the `read_diff` node reads the diff before the model
+  runs. If Git fails, the review stops with an error; if there are no changes,
+  the CLI prints "No concerns" without calling the model.
 - **`get_git_diff`:** runs `git diff HEAD` (staged and unstaged changes to
   tracked files), with file names and line references. Output is size-limited
   and truncation is reported explicitly.
@@ -170,8 +176,6 @@ It runs on every push through GitHub Actions.
   `docs/adr/` and diffs up to 60,000 characters.
 - Evidence pointers are produced by the model. Tests verify the flow, but
   nothing automatically verifies that each citation is semantically correct.
-- Reading the diff before concluding is required by the prompt, not enforced
-  by the graph: a real model could skip it.
 - Deterministic tests prove the software works; they do not prove an LLM will
   catch every architectural problem.
 - Results depend on the model: the same change can produce different wording

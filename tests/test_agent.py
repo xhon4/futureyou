@@ -47,7 +47,6 @@ def models(monkeypatch, tmp_path: Path):
 
 def review_replies() -> list[AIMessage]:
     return [
-        AIMessage("", tool_calls=[{"name": "get_git_diff", "args": {}, "id": "call-1"}]),
         AIMessage("", tool_calls=[{"name": "search_decisions", "args": {"query": "session token"}, "id": "call-2"}]),
         AIMessage(REPORT),
     ]
@@ -129,18 +128,44 @@ def test_review_routes_tools_and_reports_the_known_contradiction(models, contrad
     assert _snapshot(contradicting_repo) == before
 
 
-def test_review_without_changes_does_not_search_or_invent(models, sample_repo: Path, capsys):
-    queue, _ = models
-    queue.append([
-        AIMessage("", tool_calls=[{"name": "get_git_diff", "args": {}, "id": "call-1"}]),
-        AIMessage("No concerns"),
-    ])
+def test_review_without_changes_answers_without_the_model(models, sample_repo: Path, capsys):
+    queue, created = models
+    queue.append([])
 
-    assert cli.main(["review", str(sample_repo)]) == 0
+    assert cli.main(["review", str(sample_repo), "--thread", "clean"]) == 0
+
+    assert capsys.readouterr().out == (
+        "FutureYou Report\n\nNo concerns\n\n"
+        "Review scope: no tracked changes against HEAD; ADRs not searched.\nThread: clean\n"
+    )
+    assert created[0].seen == []
+
+
+def test_review_reads_the_diff_before_the_model_even_if_it_never_asks(models, contradicting_repo: Path, capsys):
+    queue, created = models
+    queue.append([AIMessage(REPORT)])
+
+    assert cli.main(["review", str(contradicting_repo)]) == 0
 
     out = capsys.readouterr().out
-    assert "No concerns\n" in out
-    assert "Review scope: no tracked changes against HEAD; ADRs not searched.\n" in out
+    assert REPORT in out
+    assert "Review scope: tracked changes against HEAD; no truncation; ADRs not searched.\n" in out
+    (diff,) = [m for m in created[0].seen[0] if isinstance(m, ToolMessage)]
+    assert diff.name == "get_git_diff"
+    assert "+  localStorage.setItem(TOKEN_KEY, token);" in diff.content
+
+
+def test_diff_failure_stops_the_review_without_calling_the_model(models, monkeypatch, contradicting_repo, capsys):
+    monkeypatch.setattr(agent.tools, "git_diff", lambda root: {"status": "error", "message": "fatal: bad object HEAD"})
+    queue, created = models
+    queue.append([AIMessage("No concerns")])
+
+    assert cli.main(["review", str(contradicting_repo)]) == 1
+
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == "futureyou: could not read the Git diff: fatal: bad object HEAD\n"
+    assert created[0].seen == []
 
 
 def test_review_without_adrs_reports_the_limitation(models, contradicting_repo: Path, capsys):
