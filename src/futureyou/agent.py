@@ -4,6 +4,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
@@ -32,7 +33,8 @@ def load_model() -> BaseChatModel:
     name = os.environ.get("FUTUREYOU_MODEL")
     if not name:
         raise ConfigError("FUTUREYOU_MODEL is not set, e.g. export FUTUREYOU_MODEL=openai:gpt-4.1-mini")
-    if "opencode.ai" in os.environ.get("OPENAI_BASE_URL", ""):
+    host = urlparse(os.environ.get("OPENAI_BASE_URL", "")).hostname or ""
+    if name.startswith("openai:") and (host == "opencode.ai" or host.endswith(".opencode.ai")):
         return init_chat_model(name, default_headers={"x-opencode-session": OPENCODE_SESSION})
     return init_chat_model(name)
 
