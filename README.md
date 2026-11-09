@@ -28,21 +28,21 @@ session token in `localStorage`:
 uv run futureyou review .
 ```
 
+Real output from `scripts/demo.sh` (model `kimi-k3`):
+
 ```text
 FutureYou Report
 
-1 concern
+1 concern(s)
 
-[Contradiction] Session token stored on client
-Why: The new code persists session tokens in localStorage, contradicting
-     the server-side session policy.
-Change: src/auth.ts:17-18
-Decision: docs/adr/003-authentication.md:14-16
-Suggestion: Keep server-managed sessions or explicitly revise ADR-003
-            if the architecture has changed.
+[Contradiction] Session token stored in localStorage instead of HttpOnly cookie
+Why: The change removes the server-side HttpOnly session cookie flow and persists the session token in `localStorage`, which ADR-003 (Accepted) explicitly forbids: "The client must not store persistent authentication tokens, including in `localStorage` or `sessionStorage`."
+Change: src/auth.ts:8-28
+Decision: docs/adr/003-authentication.md:13-21
+Suggestion: Revert to relying on the server-set HttpOnly, Secure session cookie and drop the localStorage token handling in `login`, `getToken`, and `logout`.
 
 Review scope: tracked changes against HEAD; no truncation; ADRs searched.
-Thread: 3f9c2a1b
+Thread: demo-1794249997
 ```
 
 The report lists at most five observations. If there are no ADRs, no
@@ -82,6 +82,16 @@ deletes the copy. Your own clone is never modified.
 
 `FUTUREYOU_MODEL` takes any `provider:model` string supported by LangChain's
 `init_chat_model`; only the OpenAI integration is installed.
+
+Any OpenAI-compatible gateway works through `OPENAI_BASE_URL`. For example,
+[OpenCode Go](https://opencode.ai/docs/console/go) (FutureYou sends the required
+`x-opencode-session` header automatically when the base URL is on opencode.ai):
+
+```bash
+export OPENAI_BASE_URL=https://opencode.ai/inference/go/openai/v1
+export OPENAI_API_KEY=oc_sk_...
+export FUTUREYOU_MODEL=openai:kimi-k3
+```
 
 ## Usage
 

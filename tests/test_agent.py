@@ -193,3 +193,34 @@ def test_provider_errors_are_reported_without_traceback(monkeypatch, tmp_path: P
     out, err = capsys.readouterr()
     assert out == ""
     assert err == "futureyou: model call failed: PermissionError: invalid API key\n"
+
+
+def test_opencode_base_url_sends_a_stable_session_header(monkeypatch):
+    monkeypatch.setenv("FUTUREYOU_MODEL", "openai:kimi-k3")
+    monkeypatch.setenv("OPENAI_API_KEY", "oc_sk_test")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://opencode.ai/inference/go/openai/v1")
+    first, second = agent.load_model(), agent.load_model()
+    session = first.default_headers["x-opencode-session"]
+    assert session.startswith("ses_")
+    assert second.default_headers["x-opencode-session"] == session
+
+
+@pytest.mark.parametrize(
+    ("model", "base_url"),
+    [
+        ("openai:gpt-4.1-mini", None),
+        ("openai:kimi-k3", "https://opencode.ai.example.com/v1"),
+        ("openai:kimi-k3", "https://example.com/opencode.ai/v1"),
+        ("anthropic:claude-haiku-5-5", "https://opencode.ai/inference/go/openai/v1"),
+    ],
+)
+def test_other_setups_send_no_session_header(monkeypatch, model, base_url):
+    calls = []
+    monkeypatch.setattr(agent, "init_chat_model", lambda name, **kwargs: calls.append((name, kwargs)))
+    monkeypatch.setenv("FUTUREYOU_MODEL", model)
+    if base_url:
+        monkeypatch.setenv("OPENAI_BASE_URL", base_url)
+    else:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    agent.load_model()
+    assert calls == [(model, {})]
