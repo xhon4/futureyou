@@ -83,6 +83,16 @@ deletes the copy. Your own clone is never modified.
 `FUTUREYOU_MODEL` takes any `provider:model` string supported by LangChain's
 `init_chat_model`; only the OpenAI integration is installed.
 
+Any OpenAI-compatible gateway works through `OPENAI_BASE_URL`. For example,
+[OpenCode Go](https://opencode.ai/docs/console/go) (FutureYou sends the required
+`x-opencode-session` header automatically when the base URL is on opencode.ai):
+
+```bash
+export OPENAI_BASE_URL=https://opencode.ai/inference/go/openai/v1
+export OPENAI_API_KEY=oc_sk_...
+export FUTUREYOU_MODEL=openai:kimi-k3
+```
+
 ## Usage
 
 ```bash

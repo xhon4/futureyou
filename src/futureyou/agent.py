@@ -1,6 +1,7 @@
 """The LangGraph review agent: state, tools bound to one repository, and routing."""
 
 import os
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +15,8 @@ from langgraph.prebuilt import ToolNode
 from futureyou import prompts, tools
 
 RECURSION_LIMIT = 12
+# OpenCode Go requires a stable x-opencode-session header; one per process is enough.
+OPENCODE_SESSION = f"ses_{uuid.uuid4().hex}"
 
 
 class State(MessagesState):
@@ -29,6 +32,8 @@ def load_model() -> BaseChatModel:
     name = os.environ.get("FUTUREYOU_MODEL")
     if not name:
         raise ConfigError("FUTUREYOU_MODEL is not set, e.g. export FUTUREYOU_MODEL=openai:gpt-4.1-mini")
+    if "opencode.ai" in os.environ.get("OPENAI_BASE_URL", ""):
+        return init_chat_model(name, default_headers={"x-opencode-session": OPENCODE_SESSION})
     return init_chat_model(name)
 
 
