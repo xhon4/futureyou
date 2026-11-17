@@ -51,6 +51,7 @@ def test_git_diff_reports_no_changes(sample_repo: Path):
         "untracked_cut": 0,
         "untracked_retained": False,
         "submodules": 0,
+        "binary_files": 0,
     }
 
 

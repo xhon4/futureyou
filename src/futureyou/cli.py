@@ -51,6 +51,9 @@ def _coverage_notes(diff: dict) -> str:
         notes.append(f"{count} untracked {noun} over the diff size limit not read")
     if diff.get("submodules"):
         notes.append("submodule contents not reviewed")
+    if count := diff.get("binary_files") or 0:
+        noun = "file" if count == 1 else "files"
+        notes.append(f"{count} {noun} shown as binary, not reviewed")
     return "".join(f"; {note}" for note in notes)
 
 

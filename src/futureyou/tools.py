@@ -222,7 +222,12 @@ def git_diff(repo_root: Path) -> dict:
                 untracked_cut += 1
             position += len(part)
         diff = diff[:kept]
-    submodules = sum(1 for line in diff.splitlines() if _SUBMODULE_LINE.match(line))
+    submodules = sum(1 for line in diff.split("\n") if _SUBMODULE_LINE.match(line))
+    binary_files = sum(
+        1
+        for line in diff.split("\n")
+        if line.startswith("Binary files ") and line.endswith(" differ")
+    )
     return {
         "status": "ok" if diff else "no_changes",
         "diff": diff,
@@ -234,6 +239,7 @@ def git_diff(repo_root: Path) -> dict:
         "untracked_cut": untracked_cut,
         "untracked_retained": retained,
         "submodules": submodules,
+        "binary_files": binary_files,
     }
 
 

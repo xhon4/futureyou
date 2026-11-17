@@ -6,7 +6,7 @@ from pathlib import Path
 from conftest import git
 from langchain_core.messages import ToolMessage
 
-from futureyou import report, tools
+from futureyou import cli, report, tools
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -147,3 +147,21 @@ def test_rename_path_containing_b_slash_uses_rename_to(tmp_path):
     ranges = report.diff_ranges(diff)
     assert "new b/name.txt" in ranges, ranges
     assert "name.txt" not in ranges
+
+
+def test_binary_attribute_is_disclosed_and_not_forced_to_text(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "note.txt").write_text("hello\n")
+    git(repo, "add", "note.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    (repo / ".gitattributes").write_text("*.txt binary\n")
+    (repo / "note.txt").write_text("hello changed\n")
+    result = tools.git_diff(repo)
+    assert result["status"] == "ok"
+    assert "hello changed" not in result["diff"]
+    assert "Binary files" in result["diff"]
+    assert result["binary_files"] >= 1
+    scope = cli.review_scope(
+        [ToolMessage(json.dumps(result), name="get_git_diff", tool_call_id="1")]
+    )
+    assert "shown as binary, not reviewed" in scope
