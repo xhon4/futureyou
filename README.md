@@ -42,11 +42,15 @@ Change: src/auth.ts:8-28
 Decision: docs/adr/003-authentication.md:13-21
 Suggestion: Revert to relying on the server-set HttpOnly, Secure session cookie and drop the localStorage token handling in `login`, `getToken`, and `logout`.
 
-Review scope: changes against HEAD, untracked files included; no truncation; ADRs searched.
+Review scope: tracked changes against HEAD; no truncation; ADRs searched.
 Thread: demo-1794249997
 ```
 
 Findings with invalid or insufficient citations are labeled `[Unverified]`.
+
+The block above is the unmodified `scripts/demo.sh` transcript (model `kimi-k3`).
+Current reviews word that scope line as
+`changes against HEAD, untracked files included`.
 
 The report lists at most five observations. If there are no ADRs, no
 matches or the diff was truncated, the report says so instead of presenting
@@ -142,8 +146,9 @@ SQLite checkpointer — thread_id
   the CLI prints "No concerns" without calling the model.
 - **`get_git_diff`:** reads staged and unstaged tracked changes against HEAD,
   plus up to 200 non-ignored untracked files, without modifying the index.
-  Binary content and untracked symlinks are omitted. Output is size-limited;
-  truncation and files skipped over the limit are reported explicitly.
+  Clean/smudge filters, fsmonitor, and Git hooks are not run. Binary content
+  and untracked symlinks are omitted. Output is size-limited; truncation and
+  files skipped over the limit are reported explicitly.
 - **`search_decisions`:** term matching over the Markdown files in `docs/adr/`,
   returning snippets with file and line references. No embeddings, vector
   stores or external services. A repository without ADRs is reported as such.
@@ -177,8 +182,18 @@ It runs on every push through GitHub Actions.
 
 - Untracked symlinks and binary file contents are omitted; at most 200
   non-ignored untracked files are read per review.
-- Only local repositories with at least one commit, Markdown ADRs under
-  `docs/adr/` and diffs up to 60,000 characters.
+- Untracked nested Git repositories are not read. A dirty submodule contributes
+  only its gitlink line; files inside the submodule are not reviewed. The
+  review scope says so in both cases.
+- An untracked file of at least 60,000 bytes is skipped. Smaller untracked
+  files are read whole, and the combined diff is then cut to 60,000 characters.
+  Git commands are not given a time limit.
+- `search_decisions` reads only Markdown files placed directly in `docs/adr/`
+  (not subdirectories), ignores query terms shorter than three characters, and
+  returns at most five fragments. Hitting those limits can still be reported
+  as "ADRs searched".
+- Only local repositories with at least one commit and diffs up to 60,000
+  characters.
 - Citations are checked against the diff and consulted ADR excerpts; semantic
   correctness is not verified.
 - Deterministic tests prove the software works; they do not prove an LLM will
