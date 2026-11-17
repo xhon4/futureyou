@@ -133,6 +133,32 @@ def _take_quoted(text: str) -> tuple[str | None, str]:
     return _unquote_git(text), ""
 
 
+def _plain_git_path(token: str) -> str:
+    token = token.split("\t", 1)[0]
+    if token.endswith("\r"):
+        token = token[:-1]
+    if token.startswith('"'):
+        return _unquote_git(token)
+    return token
+
+
+def _binary_paths(line: str) -> tuple[str, str] | None:
+    prefix, suffix = "Binary files ", " differ"
+    if not (line.startswith(prefix) and line.endswith(suffix)):
+        return None
+    body = line[len(prefix) : -len(suffix)]
+    marker = " and "
+    start = 0
+    while True:
+        index = body.find(marker, start)
+        if index < 0:
+            return None
+        left, right = body[:index], body[index + len(marker) :]
+        if left.startswith(("a/", '"a/')) and right.startswith(("b/", '"b/')):
+            return _header_path(left), _header_path(right)
+        start = index + 1
+
+
 def _split_git_paths(rest: str) -> tuple[str, str] | None:
     if rest.endswith("\r"):
         rest = rest[:-1]
@@ -246,6 +272,16 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
             value = _header_path(raw[4:])
             deleted = value == "/dev/null"
             use(old_path if deleted else value)
+            continue
+        if not in_hunk and raw.startswith("rename from "):
+            old_path = _plain_git_path(raw[len("rename from ") :])
+            continue
+        if not in_hunk and raw.startswith("rename to "):
+            use(_plain_git_path(raw[len("rename to ") :]))
+            continue
+        if not in_hunk and (pair := _binary_paths(raw)):
+            old_path = pair[0]
+            use(pair[1])
             continue
         if not in_hunk and raw.startswith("new file mode "):
             new_file_mode = True

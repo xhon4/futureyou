@@ -116,3 +116,34 @@ def test_trailing_space_in_a_path_is_not_stripped(tmp_path):
     cited = report.validate(_regret("trail ", 1, 1), _messages(diff))[0]
     assert cited is None
     assert report.validate(_regret("trail", 1, 1), _messages(diff))[0] is not None
+
+
+def test_binary_path_containing_b_slash_keeps_the_repo_path(tmp_path):
+    repo = _repo(tmp_path)
+    folder = repo / "foo b"
+    folder.mkdir()
+    target = folder / "bar.txt"
+    target.write_bytes(b"a\n")
+    git(repo, "add", "--", "foo b/bar.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    target.write_bytes(b"\0bin")
+    diff = tools.git_diff(repo)["diff"]
+    ranges = report.diff_ranges(diff)
+    assert "foo b/bar.txt" in ranges, ranges
+    assert "bar.txt" not in ranges
+
+
+def test_rename_path_containing_b_slash_uses_rename_to(tmp_path):
+    repo = _repo(tmp_path)
+    folder = repo / "foo b"
+    folder.mkdir()
+    target = folder / "bar.txt"
+    target.write_text("a\n")
+    git(repo, "add", "--", "foo b/bar.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    (repo / "new b").mkdir()
+    git(repo, "mv", "--", "foo b/bar.txt", "new b/name.txt")
+    diff = tools.git_diff(repo)["diff"]
+    ranges = report.diff_ranges(diff)
+    assert "new b/name.txt" in ranges, ranges
+    assert "name.txt" not in ranges
