@@ -288,6 +288,29 @@ def test_rev_parse_failure_includes_git_stderr(tmp_path):
     assert "fatal:" in str(caught.value)
 
 
+def test_git_timeout_kills_the_process_group(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    marker = tmp_path / "leaked"
+    program = bindir / "git"
+    program.write_text(
+        "#!/bin/sh\n"
+        f"(/bin/sleep 0.4; echo leaked > {marker}) &\n"
+        "/bin/sleep 30\n"
+    )
+    program.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir))
+    monkeypatch.setattr(tools, "GIT_TIMEOUT_SECONDS", 0.2)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with pytest.raises(tools.RepoError, match="timed out"):
+        tools.resolve_repo(repo)
+    import time
+
+    time.sleep(0.7)
+    assert not marker.exists()
+
+
 def _scope(result: dict) -> str:
     return cli.review_scope(
         [ToolMessage(json.dumps(result), name="get_git_diff", tool_call_id="1")]

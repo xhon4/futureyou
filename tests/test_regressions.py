@@ -213,14 +213,21 @@ def test_oversized_untracked_file_is_not_fully_buffered(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     (repo / "big.txt").write_text("x" * 200_000 + "\n")
     sizes: list[int] = []
-    real = subprocess.run
+    real = subprocess.Popen
 
-    def spy(cmd, **kwargs):
-        completed = real(cmd, **kwargs)
-        sizes.append(len(completed.stdout or ""))
-        return completed
+    def spy(*args, **kwargs):
+        process = real(*args, **kwargs)
+        communicate = process.communicate
 
-    monkeypatch.setattr(tools.subprocess, "run", spy)
+        def wrapped(timeout=None):
+            stdout, stderr = communicate(timeout=timeout)
+            sizes.append(len(stdout or b""))
+            return stdout, stderr
+
+        process.communicate = wrapped
+        return process
+
+    monkeypatch.setattr(tools.subprocess, "Popen", spy)
     result = tools.git_diff(repo)
     assert max(sizes) <= tools.MAX_DIFF_CHARS
     assert "x" * 1000 not in result["diff"]
@@ -375,13 +382,13 @@ def test_git_commands_pin_safe_config(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     (repo / "a.txt").write_text("z\n")
     calls = []
-    real = subprocess.run
+    real = subprocess.Popen
 
     def spy(cmd, **kwargs):
         calls.append((cmd, kwargs.get("env") or {}))
         return real(cmd, **kwargs)
 
-    monkeypatch.setattr(tools.subprocess, "run", spy)
+    monkeypatch.setattr(tools.subprocess, "Popen", spy)
     tools.git_diff(repo)
     assert calls
     for cmd, env in calls:
@@ -397,13 +404,20 @@ def test_git_subprocess_times_out_after_60_seconds(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     (repo / "a.txt").write_text("z\n")
     timeouts = []
-    real = subprocess.run
+    real = subprocess.Popen
 
-    def spy(cmd, **kwargs):
-        timeouts.append(kwargs.get("timeout"))
-        return real(cmd, **kwargs)
+    def spy(*args, **kwargs):
+        process = real(*args, **kwargs)
+        communicate = process.communicate
 
-    monkeypatch.setattr(tools.subprocess, "run", spy)
+        def wrapped(timeout=None):
+            timeouts.append(timeout)
+            return communicate(timeout=timeout)
+
+        process.communicate = wrapped
+        return process
+
+    monkeypatch.setattr(tools.subprocess, "Popen", spy)
     tools.git_diff(repo)
     assert timeouts
     assert timeouts == [60] * len(timeouts)
@@ -412,10 +426,14 @@ def test_git_subprocess_times_out_after_60_seconds(tmp_path, monkeypatch):
 def test_git_timeout_is_not_called_a_model_failure(tmp_path, monkeypatch, capsys):
     repo = _repo(tmp_path)
 
-    def timed_out(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout") or 60)
+    class TimedOut:
+        def __init__(self, cmd, **kwargs):
+            self.cmd = cmd
 
-    monkeypatch.setattr(tools.subprocess, "run", timed_out)
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(self.cmd, timeout or 60)
+
+    monkeypatch.setattr(tools.subprocess, "Popen", TimedOut)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     assert cli.main(["review", str(repo), "--thread", "slow"]) == 1
     err = capsys.readouterr().err

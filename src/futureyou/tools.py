@@ -6,6 +6,7 @@ dicts so the agent can pass them to the model and tests can assert on them.
 
 import os
 import re
+import signal
 import subprocess
 from pathlib import Path
 
@@ -87,30 +88,41 @@ def _git(
     env.pop("GIT_EXTERNAL_DIFF", None)
     for name in _REPO_LOCATING_ENV:
         env.pop(name, None)
+    command = ["git", *_GIT_CONFIG, *config, *args]
     try:
-        completed = subprocess.run(
-            ["git", *_GIT_CONFIG, *config, *args],
+        process = subprocess.Popen(
+            command,
             cwd=repo,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
             shell=False,
-            timeout=GIT_TIMEOUT_SECONDS,
+            start_new_session=True,
         )
     except FileNotFoundError as error:
         raise RepoError("git was not found on PATH") from error
     except OSError as error:
         raise RepoError(f"could not run git: {error}") from error
+    try:
+        stdout, stderr = process.communicate(timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
+        pid = getattr(process, "pid", None)
+        if pid is not None:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
         raise RepoError(
             f"git timed out after {GIT_TIMEOUT_SECONDS:g} seconds"
         ) from error
     if binary:
-        return completed
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     return subprocess.CompletedProcess(
-        completed.args,
-        completed.returncode,
-        _decode(completed.stdout),
-        _decode(completed.stderr),
+        command,
+        process.returncode,
+        _decode(stdout),
+        _decode(stderr),
     )
 
 

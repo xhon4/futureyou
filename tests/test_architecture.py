@@ -13,5 +13,5 @@ def test_every_git_subprocess_goes_through_one_helper():
         if "subprocess" in text and path.name != "tools.py":
             offenders.append(path.name)
         if path.name == "tools.py":
-            assert text.count("subprocess.run(") == 1
+            assert text.count("subprocess.Popen(") == 1
     assert offenders == []
