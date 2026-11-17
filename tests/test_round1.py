@@ -1,4 +1,11 @@
-"""Round-1 review regressions. Each test failed on aa75c61 before its fix."""
+"""Round-1 review regressions.
+
+A test that reproduces a round-1 finding failed on aa75c61 before its fix.
+`test_latin1_diff_through_the_cli_is_not_a_model_failure` did not: it drives a
+real latin-1 file through the CLI and was added with that fix. The extra
+surviving-line assertion on a truncated hunk is in `tests/test_diff_parse.py`
+and also did not fail on aa75c61.
+"""
 
 import json
 import os

@@ -61,13 +61,19 @@ def _no_provider_and_no_network(monkeypatch):
     def refuse_connect(self, address):
         raise AssertionError(f"tests must not connect to {address}")
 
+    def refuse_sendto(self, *args, **kwargs):
+        target = kwargs.get("address")
+        if target is None and args:
+            target = args[-1]
+        raise AssertionError(f"tests must not connect to {target}")
+
     def refuse_connection(*args, **kwargs):
         target = args[0] if args else kwargs.get("address")
         raise AssertionError(f"tests must not connect to {target}")
 
     monkeypatch.setattr(socket.socket, "connect", refuse_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse_connect)
-    monkeypatch.setattr(socket.socket, "sendto", refuse_connect)
+    monkeypatch.setattr(socket.socket, "sendto", refuse_sendto)
     monkeypatch.setattr(socket, "create_connection", refuse_connection)
 
 
