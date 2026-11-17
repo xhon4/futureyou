@@ -224,3 +224,15 @@ def test_git_dir_and_work_tree_do_not_move_resolve_repo(tmp_path, monkeypatch):
     monkeypatch.setenv("GIT_DIR", str(other / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(other))
     assert tools.resolve_repo(reviewed) == reviewed.resolve()
+
+
+def test_symlinked_docs_parent_is_not_searched(tmp_path):
+    repo = _repo(tmp_path)
+    outside = tmp_path / "outside" / "adr"
+    outside.mkdir(parents=True)
+    (outside / "001.md").write_text("Use the OUTSIDE_TOKEN for sessions.\n")
+    (repo / "docs").symlink_to(tmp_path / "outside")
+    result = tools.search_decisions(repo, "OUTSIDE_TOKEN")
+    assert result["status"] == "no_adrs"
+    assert result["fragments"] == []
+    assert "OUTSIDE_TOKEN" not in str(result)

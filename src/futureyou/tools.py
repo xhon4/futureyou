@@ -303,16 +303,32 @@ def _fragments(path: str, lines: list[str], terms: set[str]) -> list[tuple[int, 
     return found
 
 
+def _inside_repo(repo_root: Path, path: Path) -> bool:
+    root = repo_root.resolve()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return resolved == root or root in resolved.parents
+
+
 def search_decisions(repo_root: Path, query: str) -> dict:
     """Term search over the Markdown files directly under docs/adr/."""
     adr_dir = repo_root / "docs" / "adr"
     empty = {"fragments": [], "skipped": []}
-    if adr_dir.is_symlink() or not adr_dir.is_dir():
+    if (
+        adr_dir.is_symlink()
+        or not adr_dir.is_dir()
+        or not _inside_repo(repo_root, adr_dir)
+    ):
         return {"status": "no_adrs", **empty}
     files = sorted(
         p
         for p in adr_dir.iterdir()
-        if p.suffix == ".md" and not p.is_symlink() and p.is_file()
+        if p.suffix == ".md"
+        and not p.is_symlink()
+        and p.is_file()
+        and _inside_repo(repo_root, p)
     )
     if not files:
         return {"status": "no_adrs", **empty}
