@@ -343,7 +343,14 @@ def test_review_stops_at_the_recursion_limit(models, contradicting_repo: Path, c
     queue.append(
         [
             AIMessage(
-                "", tool_calls=[{"name": "get_git_diff", "args": {}, "id": f"call-{i}"}]
+                "",
+                tool_calls=[
+                    {
+                        "name": "search_decisions",
+                        "args": {"query": "session"},
+                        "id": f"call-{i}",
+                    }
+                ],
             )
             for i in range(20)
         ]

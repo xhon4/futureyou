@@ -64,10 +64,15 @@ def build_tools(repo_root: Path) -> list:
 
 
 def route(state: State) -> Literal["tools", "report", "__end__"]:
-    # Ask never calls tools, even if the model emits tool_calls despite tool_choice.
+    """Send only an allowed ADR search to the tools.
+
+    Ask mode never runs tools. Review mode may search decisions; a
+    hallucinated ``get_git_diff`` (the diff was already read) is not executed.
+    """
     if state["mode"] == "ask":
         return END
-    if state["messages"][-1].tool_calls:
+    calls = state["messages"][-1].tool_calls
+    if calls and all(call.get("name") == "search_decisions" for call in calls):
         return "tools"
     return "report"
 
@@ -155,7 +160,8 @@ def build_graph(model, repo_root: Path, checkpointer=None):
     graph = StateGraph(State)
     graph.add_node("read_diff", read_diff)
     graph.add_node("agent", agent)
-    graph.add_node("tools", ToolNode(tool_list))
+    # get_git_diff stays out of the node. read_diff calls tools.git_diff itself.
+    graph.add_node("tools", ToolNode([search_decisions]))
     graph.add_node("report", make_report)
     graph.add_edge("report", END)
     graph.add_conditional_edges(START, route_start)

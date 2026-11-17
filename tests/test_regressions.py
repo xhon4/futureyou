@@ -297,6 +297,68 @@ def test_ask_mode_does_not_execute_tools_when_the_model_emits_tool_calls(
     assert calls == []
 
 
+def _hallucinating_model(tool_name: str) -> GenericFakeChatModel:
+    class Hallucinating(GenericFakeChatModel):
+        def bind_tools(self, bound, **kwargs):
+            return self
+
+        def with_structured_output(self, schema, **kwargs):
+            from langchain_core.runnables import RunnableLambda
+
+            return RunnableLambda(lambda messages: report.Report(findings=[]))
+
+    return Hallucinating(
+        messages=iter(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[{"name": tool_name, "args": {}, "id": "hallucinated"}],
+                ),
+                AIMessage("done"),
+            ]
+        )
+    )
+
+
+def test_review_does_not_execute_a_hallucinated_git_diff(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "README.md").write_text("base\nchanged\n")
+    calls = []
+    original = tools.git_diff
+
+    def spy(root):
+        calls.append(root)
+        return original(root)
+
+    monkeypatch.setattr(tools, "git_diff", spy)
+    graph = agent.build_graph(_hallucinating_model("get_git_diff"), repo)
+    graph.invoke(
+        {
+            "messages": [HumanMessage("Review the changes.")],
+            "mode": "review",
+            "repo_root": str(repo),
+        },
+        {"recursion_limit": 12},
+    )
+    assert len(calls) == 1
+
+
+def test_ask_mode_does_not_execute_a_hallucinated_git_diff(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(tools, "git_diff", lambda root: calls.append(root))
+    repo = _repo(tmp_path)
+    graph = agent.build_graph(_hallucinating_model("get_git_diff"), repo)
+    graph.invoke(
+        {
+            "messages": [HumanMessage("What changed?")],
+            "mode": "ask",
+            "repo_root": str(repo),
+        },
+        {"recursion_limit": 8},
+    )
+    assert calls == []
+
+
 def test_clean_repo_does_not_require_a_model(
     sample_repo, monkeypatch, capsys, tmp_path
 ):
