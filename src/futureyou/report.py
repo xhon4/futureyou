@@ -109,7 +109,11 @@ def _strip_prefix(path: str) -> str:
 
 
 def _header_path(text: str) -> str:
-    token = text.split("\t", 1)[0].strip()
+    # Git separates an optional timestamp with a tab. Trailing spaces are part
+    # of the path; strip() would cite the trimmed name instead.
+    token = text.split("\t", 1)[0]
+    if token.endswith("\r"):
+        token = token[:-1]
     if token.startswith('"'):
         return _strip_prefix(_unquote_git(token))
     return _strip_prefix(token)
@@ -130,7 +134,8 @@ def _take_quoted(text: str) -> tuple[str | None, str]:
 
 
 def _split_git_paths(rest: str) -> tuple[str, str] | None:
-    rest = rest.strip()
+    if rest.endswith("\r"):
+        rest = rest[:-1]
     if rest.startswith('"'):
         first, rest = _take_quoted(rest)
         second, _remainder = _take_quoted(rest.lstrip())

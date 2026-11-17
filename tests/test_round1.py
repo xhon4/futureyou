@@ -100,3 +100,19 @@ def test_suppress_blank_empty_config_does_not_retarget(tmp_path):
     ranges = report.diff_ranges(diff)
     assert "innocent.py" not in ranges, ranges
     assert "b changed" in diff
+
+
+def test_trailing_space_in_a_path_is_not_stripped(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "trail").write_text("a\n")
+    (repo / "trail ").write_text("a\n")
+    git(repo, "add", "--", "trail", "trail ")
+    git(repo, "commit", "-q", "-m", "trails")
+    (repo / "trail ").write_text("b\n")
+    diff = tools.git_diff(repo)["diff"]
+    ranges = report.diff_ranges(diff)
+    assert ranges.get("trail "), ranges
+    assert "b" in diff
+    cited = report.validate(_regret("trail ", 1, 1), _messages(diff))[0]
+    assert cited is None
+    assert report.validate(_regret("trail", 1, 1), _messages(diff))[0] is not None
