@@ -247,7 +247,7 @@ def test_review_without_changes_answers_without_the_model(
         "FutureYou Report\n\nNo concerns\n\n"
         "Review scope: no changes against HEAD; ADRs not searched.\nThread: clean\n"
     )
-    assert created[0].seen == []
+    assert created == []
 
 
 def test_review_reads_the_diff_before_the_model_even_if_it_never_asks(
@@ -286,7 +286,7 @@ def test_diff_failure_stops_the_review_without_calling_the_model(
     out, err = capsys.readouterr()
     assert out == ""
     assert err == "futureyou: could not read the Git diff: fatal: bad object HEAD\n"
-    assert created[0].seen == []
+    assert created == []
 
 
 def test_review_without_adrs_reports_the_limitation(

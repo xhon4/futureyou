@@ -111,7 +111,7 @@ def review(path: Path, thread: str | None) -> int:
     with _open_checkpoints() as checkpoints:
         if checkpoints.get_tuple(_config(thread)) is not None:
             raise ThreadError(f"thread '{thread}' already exists; use another --thread")
-        graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
+        graph = agent.build_graph(agent.DeferredModel(), repo_root, checkpoints)
         state = graph.invoke(
             {
                 "messages": [HumanMessage(REVIEW_REQUEST)],
@@ -143,7 +143,7 @@ def ask(thread: str, question: str) -> int:
             )
         # Tools are never routed in ask mode; the graph only needs the reviewed root to compile.
         repo_root = Path(saved.checkpoint["channel_values"]["repo_root"])
-        graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
+        graph = agent.build_graph(agent.DeferredModel(), repo_root, checkpoints)
         state = graph.invoke(
             {"messages": [HumanMessage(question)], "mode": "ask"}, _config(thread)
         )

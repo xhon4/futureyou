@@ -64,9 +64,12 @@ def build_tools(repo_root: Path) -> list:
 
 
 def route(state: State) -> Literal["tools", "report", "__end__"]:
+    # Ask never calls tools, even if the model emits tool_calls despite tool_choice.
+    if state["mode"] == "ask":
+        return END
     if state["messages"][-1].tool_calls:
         return "tools"
-    return "report" if state["mode"] == "review" else END
+    return "report"
 
 
 def route_start(state: State) -> Literal["read_diff", "agent"]:
@@ -80,22 +83,48 @@ def route_diff(state: State) -> Literal["agent", "__end__"]:
     )
 
 
-def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
+class DeferredModel:
+    """Load the provider model on first use.
+
+    A clean repository and a Git failure never reach the agent node, so they
+    do not need FUTUREYOU_MODEL. ``bind_tools`` stays inside that node.
+    """
+
+    def __init__(self) -> None:
+        self._model: BaseChatModel | None = None
+
+    def _load(self) -> BaseChatModel:
+        if self._model is None:
+            self._model = load_model()
+        return self._model
+
+    def bind_tools(self, tools, **kwargs):
+        return self._load().bind_tools(tools, **kwargs)
+
+    def with_structured_output(self, schema, **kwargs):
+        return self._load().with_structured_output(schema, **kwargs)
+
+    def invoke(self, messages, **kwargs):
+        return self._load().invoke(messages, **kwargs)
+
+
+def build_graph(model, repo_root: Path, checkpointer=None):
     tool_list = build_tools(repo_root)
     get_git_diff, search_decisions = tool_list
-    # The graph reads the diff itself, so the review model can only search the ADRs.
-    review_model = model.bind_tools([search_decisions])
-    # Same tools, but never callable: the saved history keeps valid tool messages.
-    ask_model = model.bind_tools(tool_list, tool_choice="none")
 
     def agent(state: State) -> dict:
         if state["mode"] == "review":
-            chat, instructions = review_model, prompts.REVIEW
+            # The graph already read the diff, so the review model only searches ADRs.
+            chat = model.bind_tools([search_decisions])
+            instructions = prompts.REVIEW
         else:
-            chat, instructions = ask_model, prompts.ASK
-        return {
-            "messages": [chat.invoke([SystemMessage(instructions), *state["messages"]])]
-        }
+            # tool_choice is a hint. route() is what actually refuses tool calls.
+            chat = model.bind_tools(tool_list, tool_choice="none")
+            instructions = prompts.ASK
+        reply = chat.invoke([SystemMessage(instructions), *state["messages"]])
+        if state["mode"] == "ask" and getattr(reply, "tool_calls", None):
+            reply = AIMessage(reply.text)
+        return {"messages": [reply]}
 
     def read_diff(state: State) -> dict:
         """Read the diff before the model runs, recorded as a regular get_git_diff call."""

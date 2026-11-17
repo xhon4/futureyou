@@ -8,9 +8,10 @@ import subprocess
 from pathlib import Path
 
 from conftest import git
-from langchain_core.messages import ToolMessage
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from futureyou import cli, report, tools
+from futureyou import agent, cli, report, tools
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -249,6 +250,63 @@ def test_decode_error_is_not_called_a_model_failure(tmp_path, monkeypatch, capsy
     err = capsys.readouterr().err
     assert "model call failed" not in err
     assert "decode" in err.lower()
+
+
+def test_ask_mode_does_not_execute_tools_when_the_model_emits_tool_calls(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake(root, query):
+        calls.append(query)
+        return {"status": "no_matches", "fragments": [], "skipped": []}
+
+    monkeypatch.setattr(tools, "search_decisions", fake)
+    repo = _repo(tmp_path)
+
+    class Noncompliant(GenericFakeChatModel):
+        def bind_tools(self, bound, **kwargs):
+            return self
+
+    model = Noncompliant(
+        messages=iter(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "search_decisions",
+                            "args": {"query": "tokens"},
+                            "id": "c1",
+                        }
+                    ],
+                ),
+                AIMessage("answer"),
+            ]
+        )
+    )
+    graph = agent.build_graph(model, repo)
+    graph.invoke(
+        {
+            "messages": [HumanMessage("What did we decide?")],
+            "mode": "ask",
+            "repo_root": str(repo),
+        },
+        {"recursion_limit": 8},
+    )
+    assert calls == []
+
+
+def test_clean_repo_does_not_require_a_model(
+    sample_repo, monkeypatch, capsys, tmp_path
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.delenv("FUTUREYOU_MODEL", raising=False)
+    assert cli.main(["review", str(sample_repo), "--thread", "clean"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "No concerns" in out
+    assert "FUTUREYOU_MODEL" not in out
 
 
 def test_git_commands_pin_safe_config(tmp_path, monkeypatch):
