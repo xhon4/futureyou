@@ -9,7 +9,14 @@ EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 def git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.name=FutureYou Tests", "-c", "user.email=tests@example.com", *args],
+        [
+            "git",
+            "-c",
+            "user.name=FutureYou Tests",
+            "-c",
+            "user.email=tests@example.com",
+            *args,
+        ],
         cwd=repo,
         check=True,
         capture_output=True,

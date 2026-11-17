@@ -26,7 +26,9 @@ class RepoError(Exception):
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, shell=False)
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, shell=False
+    )
 
 
 def resolve_repo(path: Path) -> Path:
@@ -38,23 +40,41 @@ def resolve_repo(path: Path) -> Path:
         raise RepoError(f"{path} is not a Git repository")
     root = Path(top.stdout.strip()).resolve()
     if _git(root, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
-        raise RepoError(f"{root} has no commits yet; FutureYou compares changes against HEAD")
+        raise RepoError(
+            f"{root} has no commits yet; FutureYou compares changes against HEAD"
+        )
     return root
 
 
 def git_diff(repo_root: Path) -> dict:
     """Changes against HEAD, including non-ignored untracked files, without modifying the index."""
-    result = _git(repo_root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD")
+    result = _git(
+        repo_root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD"
+    )
     if result.returncode != 0:
         return {"status": "error", "message": result.stderr.strip()}
     diff = result.stdout
     listing = _git(repo_root, "ls-files", "--others", "--exclude-standard", "-z")
     if listing.returncode != 0:
         return {"status": "error", "message": listing.stderr.strip()}
-    files = [name for name in listing.stdout.split("\0") if name and not (repo_root / name).is_symlink()]
+    files = [
+        name
+        for name in listing.stdout.split("\0")
+        if name and not (repo_root / name).is_symlink()
+    ]
     included = files[:MAX_UNTRACKED_FILES]
     for name in included:
-        result = _git(repo_root, "diff", "--no-index", "--no-color", "--no-ext-diff", "--no-textconv", "--", "/dev/null", name)
+        result = _git(
+            repo_root,
+            "diff",
+            "--no-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--",
+            "/dev/null",
+            name,
+        )
         if result.returncode not in (0, 1):
             return {"status": "error", "message": result.stderr.strip()}
         diff += result.stdout
@@ -62,8 +82,13 @@ def git_diff(repo_root: Path) -> dict:
     if truncated:
         cut = diff.rfind("\n", 0, MAX_DIFF_CHARS) + 1
         diff = diff[: cut or MAX_DIFF_CHARS]
-    return {"status": "ok" if diff or files else "no_changes", "diff": diff, "truncated": truncated,
-            "untracked": len(included), "untracked_skipped": len(files) - len(included)}
+    return {
+        "status": "ok" if diff or files else "no_changes",
+        "diff": diff,
+        "truncated": truncated,
+        "untracked": len(included),
+        "untracked_skipped": len(files) - len(included),
+    }
 
 
 def _adr_status(lines: list[str]) -> str:
@@ -87,16 +112,18 @@ def _fragments(path: str, lines: list[str], terms: set[str]) -> list[tuple[int, 
         end = min(len(lines), start + MAX_FRAGMENT_LINES)
         covered_until = end
         window = set(_WORD.findall(" ".join(lines[start:end]).lower()))
-        found.append((
-            len(terms & window),
-            {
-                "path": path,
-                "start_line": start + 1,
-                "end_line": end,
-                "adr_status": status,
-                "excerpt": "\n".join(lines[start:end]),
-            },
-        ))
+        found.append(
+            (
+                len(terms & window),
+                {
+                    "path": path,
+                    "start_line": start + 1,
+                    "end_line": end,
+                    "adr_status": status,
+                    "excerpt": "\n".join(lines[start:end]),
+                },
+            )
+        )
     return found
 
 
@@ -107,13 +134,18 @@ def search_decisions(repo_root: Path, query: str) -> dict:
     if adr_dir.is_symlink() or not adr_dir.is_dir():
         return {"status": "no_adrs", **empty}
     files = sorted(
-        p for p in adr_dir.iterdir() if p.suffix == ".md" and not p.is_symlink() and p.is_file()
+        p
+        for p in adr_dir.iterdir()
+        if p.suffix == ".md" and not p.is_symlink() and p.is_file()
     )
     if not files:
         return {"status": "no_adrs", **empty}
 
     skipped = [
-        {"path": p.relative_to(repo_root).as_posix(), "reason": f"over the {MAX_ADR_FILES}-file limit"}
+        {
+            "path": p.relative_to(repo_root).as_posix(),
+            "reason": f"over the {MAX_ADR_FILES}-file limit",
+        }
         for p in files[MAX_ADR_FILES:]
     ]
     terms = {t for t in _WORD.findall(query.lower()) if len(t) >= MIN_TERM_LENGTH}

@@ -35,7 +35,10 @@ def _open_checkpoints():
 
 
 def _config(thread: str) -> dict:
-    return {"configurable": {"thread_id": thread}, "recursion_limit": agent.RECURSION_LIMIT}
+    return {
+        "configurable": {"thread_id": thread},
+        "recursion_limit": agent.RECURSION_LIMIT,
+    }
 
 
 def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
@@ -54,7 +57,10 @@ def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
     if diffs and diffs[-1].get("untracked_skipped", 0):
         diff_scope += f"; {diffs[-1]['untracked_skipped']} untracked files over the {tools.MAX_UNTRACKED_FILES}-file limit not read"
 
-    statuses = {result.get("status") for result in report.tool_results(messages, "search_decisions")}
+    statuses = {
+        result.get("status")
+        for result in report.tool_results(messages, "search_decisions")
+    }
     if not statuses:
         adr_scope = "ADRs not searched"
     elif "no_adrs" in statuses:
@@ -65,7 +71,11 @@ def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
         adr_scope = "no matching ADRs"
     else:
         adr_scope = "ADRs searched"
-    invalid = f"; {invalid_evidence} finding(s) with invalid evidence" if invalid_evidence else ""
+    invalid = (
+        f"; {invalid_evidence} finding(s) with invalid evidence"
+        if invalid_evidence
+        else ""
+    )
     return f"Review scope: {diff_scope}; {adr_scope}{invalid}."
 
 
@@ -77,14 +87,22 @@ def review(path: Path, thread: str | None) -> int:
             raise ThreadError(f"thread '{thread}' already exists; use another --thread")
         graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
         state = graph.invoke(
-            {"messages": [HumanMessage(REVIEW_REQUEST)], "mode": "review", "repo_root": str(repo_root)},
+            {
+                "messages": [HumanMessage(REVIEW_REQUEST)],
+                "mode": "review",
+                "repo_root": str(repo_root),
+            },
             _config(thread),
         )
     diff = report.tool_results(state["messages"], "get_git_diff")[0]
     if diff["status"] == "error":
         raise tools.RepoError(f"could not read the Git diff: {diff['message']}")
     print("FutureYou Report\n")
-    print("No concerns" if diff["status"] == "no_changes" else state["messages"][-1].text.strip())
+    print(
+        "No concerns"
+        if diff["status"] == "no_changes"
+        else state["messages"][-1].text.strip()
+    )
     print(f"\n{review_scope(state['messages'], state.get('invalid_evidence', 0))}")
     print(f"Thread: {thread}")
     return 0
@@ -94,11 +112,15 @@ def ask(thread: str, question: str) -> int:
     with _open_checkpoints() as checkpoints:
         saved = checkpoints.get_tuple(_config(thread))
         if saved is None:
-            raise ThreadError(f"thread '{thread}' does not exist; run futureyou review first")
+            raise ThreadError(
+                f"thread '{thread}' does not exist; run futureyou review first"
+            )
         # Tools are never routed in ask mode; the graph only needs the reviewed root to compile.
         repo_root = Path(saved.checkpoint["channel_values"]["repo_root"])
         graph = agent.build_graph(agent.load_model(), repo_root, checkpoints)
-        state = graph.invoke({"messages": [HumanMessage(question)], "mode": "ask"}, _config(thread))
+        state = graph.invoke(
+            {"messages": [HumanMessage(question)], "mode": "ask"}, _config(thread)
+        )
     print(state["messages"][-1].text.strip())
     return 0
 
@@ -110,17 +132,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     review_parser = commands.add_parser(
-        "review", help="review changes against HEAD, including non-ignored untracked files"
+        "review",
+        help="review changes against HEAD, including non-ignored untracked files",
     )
-    review_parser.add_argument("path", type=Path, help="path inside the Git repository to review")
-    review_parser.add_argument("--thread", help="name for this review session (default: a generated ID)")
+    review_parser.add_argument(
+        "path", type=Path, help="path inside the Git repository to review"
+    )
+    review_parser.add_argument(
+        "--thread", help="name for this review session (default: a generated ID)"
+    )
     ask_parser = commands.add_parser(
         "ask",
         help="ask a follow-up question about a saved review",
         description="Answer from the saved review conversation. It does not read the current code; "
         "run a new review to see newer changes.",
     )
-    ask_parser.add_argument("--thread", required=True, help="thread of a previous review")
+    ask_parser.add_argument(
+        "--thread", required=True, help="thread of a previous review"
+    )
     ask_parser.add_argument("question", help="follow-up question about that review")
     args = parser.parse_args(argv)
 
@@ -131,9 +160,15 @@ def main(argv: list[str] | None = None) -> int:
     except (tools.RepoError, agent.ConfigError, ThreadError) as error:
         print(f"futureyou: {error}", file=sys.stderr)
     except GraphRecursionError:
-        print(f"futureyou: the review stopped after {agent.RECURSION_LIMIT} steps without a report", file=sys.stderr)
+        print(
+            f"futureyou: the review stopped after {agent.RECURSION_LIMIT} steps without a report",
+            file=sys.stderr,
+        )
     except Exception as error:  # Provider, authentication and network errors.
-        print(f"futureyou: model call failed: {type(error).__name__}: {error}", file=sys.stderr)
+        print(
+            f"futureyou: model call failed: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
     return 1
 
 

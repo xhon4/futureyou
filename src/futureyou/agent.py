@@ -34,10 +34,16 @@ class ConfigError(Exception):
 def load_model() -> BaseChatModel:
     name = os.environ.get("FUTUREYOU_MODEL")
     if not name:
-        raise ConfigError("FUTUREYOU_MODEL is not set, e.g. export FUTUREYOU_MODEL=openai:gpt-4.1-mini")
+        raise ConfigError(
+            "FUTUREYOU_MODEL is not set, e.g. export FUTUREYOU_MODEL=openai:gpt-4.1-mini"
+        )
     host = urlparse(os.environ.get("OPENAI_BASE_URL", "")).hostname or ""
-    if name.startswith("openai:") and (host == "opencode.ai" or host.endswith(".opencode.ai")):
-        return init_chat_model(name, default_headers={"x-opencode-session": OPENCODE_SESSION})
+    if name.startswith("openai:") and (
+        host == "opencode.ai" or host.endswith(".opencode.ai")
+    ):
+        return init_chat_model(
+            name, default_headers={"x-opencode-session": OPENCODE_SESSION}
+        )
     return init_chat_model(name)
 
 
@@ -69,7 +75,9 @@ def route_start(state: State) -> Literal["read_diff", "agent"]:
 
 def route_diff(state: State) -> Literal["agent", "__end__"]:
     """Only a readable, non-empty diff reaches the model; the CLI reports the other cases."""
-    return "agent" if json.loads(state["messages"][-1].content)["status"] == "ok" else END
+    return (
+        "agent" if json.loads(state["messages"][-1].content)["status"] == "ok" else END
+    )
 
 
 def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
@@ -85,24 +93,35 @@ def build_graph(model: BaseChatModel, repo_root: Path, checkpointer=None):
             chat, instructions = review_model, prompts.REVIEW
         else:
             chat, instructions = ask_model, prompts.ASK
-        return {"messages": [chat.invoke([SystemMessage(instructions), *state["messages"]])]}
+        return {
+            "messages": [chat.invoke([SystemMessage(instructions), *state["messages"]])]
+        }
 
     def read_diff(state: State) -> dict:
         """Read the diff before the model runs, recorded as a regular get_git_diff call."""
         call = {"name": get_git_diff.name, "args": {}, "id": "read-diff"}
         result = tools.git_diff(repo_root)
-        return {"messages": [
-            AIMessage("", tool_calls=[call]),
-            ToolMessage(json.dumps(result), tool_call_id=call["id"], name=call["name"]),
-        ]}
+        return {
+            "messages": [
+                AIMessage("", tool_calls=[call]),
+                ToolMessage(
+                    json.dumps(result), tool_call_id=call["id"], name=call["name"]
+                ),
+            ]
+        }
 
     def make_report(state: State) -> dict:
         structured = model.with_structured_output(report.Report).invoke(
             [SystemMessage(prompts.REPORT), *state["messages"]]
         )
         findings = structured.findings[:5]
-        invalid = sum(any(report.validate(finding, state["messages"])) for finding in findings)
-        return {"messages": [AIMessage(report.render(findings, state["messages"]))], "invalid_evidence": invalid}
+        invalid = sum(
+            any(report.validate(finding, state["messages"])) for finding in findings
+        )
+        return {
+            "messages": [AIMessage(report.render(findings, state["messages"]))],
+            "invalid_evidence": invalid,
+        }
 
     graph = StateGraph(State)
     graph.add_node("read_diff", read_diff)

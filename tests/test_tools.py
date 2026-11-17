@@ -14,9 +14,19 @@ def test_git_diff_includes_staged_unstaged_and_untracked(sample_repo: Path):
     (sample_repo / "src" / "auth.ts").write_text("// unstaged change\n")
     (sample_repo / "src" / "new.ts").write_text("// untracked file\n")
 
-    before = subprocess.run(["git", "status", "--porcelain"], cwd=sample_repo, capture_output=True, check=True).stdout
+    before = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=sample_repo,
+        capture_output=True,
+        check=True,
+    ).stdout
     result = tools.git_diff(sample_repo)
-    after = subprocess.run(["git", "status", "--porcelain"], cwd=sample_repo, capture_output=True, check=True).stdout
+    after = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=sample_repo,
+        capture_output=True,
+        check=True,
+    ).stdout
 
     assert before == after
     assert result["status"] == "ok"
@@ -30,7 +40,13 @@ def test_git_diff_includes_staged_unstaged_and_untracked(sample_repo: Path):
 
 
 def test_git_diff_reports_no_changes(sample_repo: Path):
-    assert tools.git_diff(sample_repo) == {"status": "no_changes", "diff": "", "truncated": False, "untracked": 0, "untracked_skipped": 0}
+    assert tools.git_diff(sample_repo) == {
+        "status": "no_changes",
+        "diff": "",
+        "truncated": False,
+        "untracked": 0,
+        "untracked_skipped": 0,
+    }
 
 
 def test_git_diff_untracked_only_and_ignored(sample_repo: Path):
@@ -78,7 +94,9 @@ def test_git_diff_untracked_content_is_truncated(sample_repo: Path, monkeypatch)
 
 
 def test_git_diff_truncates_at_a_line_boundary(sample_repo: Path):
-    (sample_repo / "src" / "auth.ts").write_text("x" * 99 + "\n" * 1 + ("y" * 99 + "\n") * 1000)
+    (sample_repo / "src" / "auth.ts").write_text(
+        "x" * 99 + "\n" * 1 + ("y" * 99 + "\n") * 1000
+    )
 
     result = tools.git_diff(sample_repo)
 
@@ -125,7 +143,9 @@ def test_search_decisions_without_adrs(sample_repo: Path):
     assert result == {"status": "no_adrs", "fragments": [], "skipped": []}
 
 
-def test_search_decisions_skips_oversized_files_and_symlinks(sample_repo: Path, tmp_path: Path):
+def test_search_decisions_skips_oversized_files_and_symlinks(
+    sample_repo: Path, tmp_path: Path
+):
     adr_dir = sample_repo / "docs" / "adr"
     (adr_dir / "004-huge.md").write_text("session\n" * (tools.MAX_ADR_BYTES // 8 + 1))
     outside = tmp_path / "outside.md"
@@ -135,5 +155,7 @@ def test_search_decisions_skips_oversized_files_and_symlinks(sample_repo: Path, 
     result = tools.search_decisions(sample_repo, "session")
 
     assert result["status"] == "partial"
-    assert result["skipped"] == [{"path": "docs/adr/004-huge.md", "reason": "larger than 64 KiB"}]
+    assert result["skipped"] == [
+        {"path": "docs/adr/004-huge.md", "reason": "larger than 64 KiB"}
+    ]
     assert all("outside" not in f["excerpt"] for f in result["fragments"])
