@@ -8,8 +8,9 @@ architecture decisions (ADRs) and reports evidence-backed observations.
 It is not a full audit system. It is a small, working LangGraph agent with two
 tools, persistent state and deterministic tests.
 
-> **Status:** V0.1. Working CLI with deterministic tests; real-model output
-> below is illustrative until the first recorded demo run.
+> **Status:** v0.2 "Reliable Reviews". The graph always reads the diff,
+> untracked files are reviewed, and every citation is checked against the
+> evidence actually read.
 
 ## The problem
 
@@ -44,6 +45,12 @@ Suggestion: Revert to relying on the server-set HttpOnly, Secure session cookie 
 Review scope: tracked changes against HEAD; no truncation; ADRs searched.
 Thread: demo-1794249997
 ```
+
+Findings with invalid or insufficient citations are labeled `[Unverified]`.
+
+The block above is the unmodified `scripts/demo.sh` transcript (model `kimi-k3`).
+Current reviews word that scope line as
+`changes against HEAD, untracked files included`.
 
 The report lists at most five observations. If there are no ADRs, no
 matches or the diff was truncated, the report says so instead of presenting
@@ -118,12 +125,15 @@ uv run futureyou ask --thread auth-review "What should I change first?"
 CLI input
    │
    ▼
+read_diff (deterministic get_git_diff) ── error or no changes ──► CLI reports it
+   │
+   ▼
 Agent node (LLM + tool selection) ──── no tool call ───► Final report
    │  ▲
 tool call
    │  │
    ▼  │
-ToolNode (get_git_diff · search_decisions)
+ToolNode (search_decisions)
 
 SQLite checkpointer — thread_id
 ```
@@ -131,9 +141,14 @@ SQLite checkpointer — thread_id
 - **Graph:** an explicit `StateGraph` with a `ToolNode` and conditional routing,
   no prebuilt agent hiding the flow. Iterations are bounded by LangGraph's
   `recursion_limit`.
-- **`get_git_diff`:** runs `git diff HEAD` (staged and unstaged changes to
-  tracked files), with file names and line references. Output is size-limited
-  and truncation is reported explicitly.
+- **Guaranteed diff:** the `read_diff` node reads the diff before the model
+  runs. If Git fails, the review stops with an error; if there are no changes,
+  the CLI prints "No concerns" without calling the model.
+- **`get_git_diff`:** reads staged and unstaged tracked changes against HEAD,
+  plus up to 200 non-ignored untracked files, without modifying the index.
+  Clean/smudge filters, fsmonitor, and Git hooks are not run. Binary content
+  and untracked symlinks are omitted. Output is size-limited; truncation and
+  files skipped over the limit are reported explicitly.
 - **`search_decisions`:** term matching over the Markdown files in `docs/adr/`,
   returning snippets with file and line references. No embeddings, vector
   stores or external services. A repository without ADRs is reported as such.
@@ -165,19 +180,32 @@ It runs on every push through GitHub Actions.
 
 ## Known limitations
 
-- Untracked files do not appear in `git diff HEAD`.
-- Only local repositories with at least one commit, Markdown ADRs under
-  `docs/adr/` and diffs up to 60,000 characters.
-- Evidence pointers are produced by the model. Tests verify the flow, but
-  nothing automatically verifies that each citation is semantically correct.
-- Reading the diff before concluding is required by the prompt, not enforced
-  by the graph: a real model could skip it.
+- Untracked symlinks and binary file contents are omitted; at most 200
+  non-ignored untracked files are read per review.
+- Untracked nested Git repositories are not read. A dirty submodule contributes
+  only its gitlink line; files inside the submodule are not reviewed. The
+  review scope says so in both cases.
+- An untracked file of at least 60,000 bytes is skipped. Smaller untracked
+  files are read whole, and the combined diff is then cut to 60,000 characters.
+  The tracked diff is also read in full before that cut; it is not streamed.
+  A Git command that runs longer than 60 seconds stops the review.
+- A repository that already uses a split index can have its shared index
+  timestamp refreshed by Git during the read. `core.splitIndex=false` does
+  not stop that on Git 2.43.
+- `search_decisions` reads only Markdown files placed directly in `docs/adr/`
+  (not subdirectories), ignores query terms shorter than three characters, and
+  returns at most five fragments. Hitting those limits can still be reported
+  as "ADRs searched".
+- Only local repositories with at least one commit and diffs up to 60,000
+  characters.
+- Citations are checked against the diff and consulted ADR excerpts; semantic
+  correctness is not verified.
 - Deterministic tests prove the software works; they do not prove an LLM will
   catch every architectural problem.
 - Results depend on the model: the same change can produce different wording
   or line ranges across runs.
 
-## Out of scope for V0.1
+## Out of scope
 
 Web UI, GitHub App or automatic PR review, multiple agents, RAG or vector
 databases, Jira/Linear integration, long-term semantic memory, automatic code
