@@ -192,3 +192,35 @@ def test_dotted_filter_driver_does_not_run(tmp_path):
     assert "v2" in result["diff"]
     assert "POINTER" not in result["diff"]
     assert not marker.exists()
+
+
+def _other_repo(tmp_path: Path) -> Path:
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    (other / "secret.txt").write_text("SECRET_TOKEN\n")
+    git(other, "add", "secret.txt")
+    git(other, "commit", "-q", "-m", "secret")
+    return other
+
+
+def test_inherited_git_dir_does_not_read_another_repo(tmp_path, monkeypatch):
+    reviewed = _repo(tmp_path)
+    (reviewed / "tracked.txt").write_text("visible\n")
+    git(reviewed, "add", "tracked.txt")
+    git(reviewed, "commit", "-q", "-m", "add")
+    (reviewed / "tracked.txt").write_text("visible changed\n")
+    other = _other_repo(tmp_path)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    result = tools.git_diff(reviewed)
+    assert "SECRET_TOKEN" not in result.get("diff", "")
+    assert result["status"] == "ok"
+    assert "visible changed" in result["diff"]
+
+
+def test_git_dir_and_work_tree_do_not_move_resolve_repo(tmp_path, monkeypatch):
+    reviewed = _repo(tmp_path)
+    other = _other_repo(tmp_path)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    assert tools.resolve_repo(reviewed) == reviewed.resolve()

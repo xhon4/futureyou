@@ -56,6 +56,18 @@ _GIT_CONFIG = (
     "advice.detachedHead=false",
 )
 _DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color")
+# These choose which repository Git reads. The caller passes the work tree
+# as cwd; an inherited value would review a different repo. Config isolation
+# (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM) is left in place.
+_REPO_LOCATING_ENV = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
 
 
 class RepoError(Exception):
@@ -73,6 +85,8 @@ def _git(
     # Skip optional index refresh so a read does not rewrite `.git/index`.
     env["GIT_OPTIONAL_LOCKS"] = "0"
     env.pop("GIT_EXTERNAL_DIFF", None)
+    for name in _REPO_LOCATING_ENV:
+        env.pop(name, None)
     try:
         completed = subprocess.run(
             ["git", *_GIT_CONFIG, *config, *args],
