@@ -68,3 +68,35 @@ def test_formfeed_does_not_retarget_a_later_hunk(tmp_path):
     ranges = report.diff_ranges(diff)
     assert "innocent.py" not in ranges, ranges
     assert ranges.get("real.py"), ranges
+
+
+def test_blank_context_does_not_end_the_hunk():
+    diff = (
+        "diff --git a/blank.py b/blank.py\n"
+        "--- a/blank.py\n"
+        "+++ b/blank.py\n"
+        "@@ -1,5 +1,5 @@\n"
+        " a\n"
+        "\n"
+        "+++ b/innocent.py\n"
+        "@@ -10 +10 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    ranges = report.diff_ranges(diff)
+    assert "innocent.py" not in ranges, ranges
+    assert any(start <= 10 <= end for start, end in ranges.get("blank.py", [])), ranges
+
+
+def test_suppress_blank_empty_config_does_not_retarget(tmp_path):
+    repo = _repo(tmp_path)
+    target = repo / "blank.py"
+    target.write_text("a\n\nb\n")
+    git(repo, "add", "blank.py")
+    git(repo, "commit", "-q", "-m", "add")
+    target.write_text("a\n\n++ b/innocent.py\nb changed\n")
+    git(repo, "config", "diff.suppressBlankEmpty", "true")
+    diff = tools.git_diff(repo)["diff"]
+    ranges = report.diff_ranges(diff)
+    assert "innocent.py" not in ranges, ranges
+    assert "b changed" in diff

@@ -45,6 +45,8 @@ _GIT_CONFIG = (
     "-c",
     "diff.submodule=short",
     "-c",
+    "diff.suppressBlankEmpty=false",
+    "-c",
     "diff.external=",
     "-c",
     "color.ui=false",

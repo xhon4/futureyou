@@ -258,6 +258,17 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
             continue
         if not in_hunk or path is None:
             continue
+        if raw == "":
+            # diff.suppressBlankEmpty emits a blank context line as an empty
+            # string. It is still context; it must not end the hunk.
+            bucket = lines.setdefault(path, set())
+            if old_line >= 1:
+                bucket.add(old_line)
+            if not deleted and new_line >= 1:
+                bucket.add(new_line)
+            old_line += 1
+            new_line += 1
+            continue
         if raw.startswith("\\"):
             continue
         bucket = lines.setdefault(path, set())
