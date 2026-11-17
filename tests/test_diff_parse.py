@@ -160,3 +160,5 @@ def test_truncated_hunk_does_not_verify_lines_absent_from_the_body(
     ranges = report.diff_ranges(diff).get("big.py", [])
     assert not any(start <= 1 <= 80 <= end for start, end in ranges), ranges
     assert report.validate(_regret("big.py", 80, 80), _messages(diff))[0] is not None
+    assert "old0" in diff
+    assert report.validate(_regret("big.py", 1, 1), _messages(diff))[0] is None

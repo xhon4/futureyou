@@ -56,7 +56,9 @@ def _coverage_notes(diff: dict) -> str:
         notes.append(f"{count} {noun} shown as binary, not reviewed")
     if count := diff.get("undecodable_untracked") or 0:
         noun = "name" if count == 1 else "names"
-        notes.append(f"{count} untracked {noun} skipped because they are not valid paths")
+        notes.append(
+            f"{count} untracked {noun} skipped because they are not valid paths"
+        )
     return "".join(f"; {note}" for note in notes)
 
 

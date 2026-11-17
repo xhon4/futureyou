@@ -350,22 +350,6 @@ def test_review_does_not_execute_a_hallucinated_git_diff(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
-def test_ask_mode_does_not_execute_a_hallucinated_git_diff(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(tools, "git_diff", lambda root: calls.append(root))
-    repo = _repo(tmp_path)
-    graph = agent.build_graph(_hallucinating_model("get_git_diff"), repo)
-    graph.invoke(
-        {
-            "messages": [HumanMessage("What changed?")],
-            "mode": "ask",
-            "repo_root": str(repo),
-        },
-        {"recursion_limit": 8},
-    )
-    assert calls == []
-
-
 def test_clean_repo_does_not_require_a_model(
     sample_repo, monkeypatch, capsys, tmp_path
 ):

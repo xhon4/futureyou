@@ -38,6 +38,37 @@ def _messages(diff: str) -> list[ToolMessage]:
     return [ToolMessage(json.dumps(payload), name="get_git_diff", tool_call_id="1")]
 
 
+def test_latin1_diff_through_the_cli_is_not_a_model_failure(
+    tmp_path, monkeypatch, capsys
+):
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.runnables import RunnableLambda
+
+    from futureyou import agent
+
+    class Stub(GenericFakeChatModel):
+        def bind_tools(self, bound, **kwargs):
+            return self
+
+        def with_structured_output(self, schema, **kwargs):
+            return RunnableLambda(lambda messages: report.Report(findings=[]))
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setattr(
+        agent, "load_model", lambda: Stub(messages=iter([AIMessage("ok")]))
+    )
+    repo = _repo(tmp_path)
+    (repo / "latin.txt").write_bytes("café\n".encode("latin-1"))
+    git(repo, "add", "latin.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    (repo / "latin.txt").write_bytes("café changed\n".encode("latin-1"))
+    assert cli.main(["review", str(repo), "--thread", "latin"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert "FutureYou Report" in out
+
+
 def test_cr_inside_a_line_does_not_forge_a_hunk():
     diff = (
         "diff --git a/f.py b/f.py\n"
@@ -171,9 +202,7 @@ def test_binary_attribute_is_disclosed_and_not_forced_to_text(tmp_path):
 
 def _writer(path: Path, marker: Path) -> None:
     path.write_text(
-        "#!/bin/sh\n"
-        f"mkdir -p .git/evil && echo x > {marker}\n"
-        "printf 'POINTER\\n'\n"
+        f"#!/bin/sh\nmkdir -p .git/evil && echo x > {marker}\nprintf 'POINTER\\n'\n"
     )
     path.chmod(0o755)
 
@@ -294,9 +323,7 @@ def test_git_timeout_kills_the_process_group(tmp_path, monkeypatch):
     marker = tmp_path / "leaked"
     program = bindir / "git"
     program.write_text(
-        "#!/bin/sh\n"
-        f"(/bin/sleep 0.4; echo leaked > {marker}) &\n"
-        "/bin/sleep 30\n"
+        f"#!/bin/sh\n(/bin/sleep 0.4; echo leaked > {marker}) &\n/bin/sleep 30\n"
     )
     program.chmod(0o755)
     monkeypatch.setenv("PATH", str(bindir))
