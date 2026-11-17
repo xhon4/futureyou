@@ -381,7 +381,7 @@ def test_git_commands_pin_safe_config(tmp_path, monkeypatch):
         assert "diff.noprefix=false" in cmd
         assert "core.fsmonitor=false" in cmd
         assert "core.hooksPath=/dev/null" in cmd
-        assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+        assert env.get(b"GIT_OPTIONAL_LOCKS") == b"0"
 
 
 def test_git_subprocess_times_out_after_60_seconds(tmp_path, monkeypatch):

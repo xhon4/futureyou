@@ -142,43 +142,49 @@ def _plain_git_path(token: str) -> str:
     return token
 
 
-def _binary_paths(line: str) -> tuple[str, str] | None:
-    prefix, suffix = "Binary files ", " differ"
-    if not (line.startswith(prefix) and line.endswith(suffix)):
-        return None
-    body = line[len(prefix) : -len(suffix)]
-    marker = " and "
-    start = 0
-    while True:
-        index = body.find(marker, start)
-        if index < 0:
-            return None
-        left, right = body[:index], body[index + len(marker) :]
-        if left.startswith(("a/", '"a/')) and right.startswith(("b/", '"b/')):
-            return _header_path(left), _header_path(right)
-        start = index + 1
+def _path_body(token: str) -> str:
+    token = token.split("\t", 1)[0]
+    if token.endswith("\r"):
+        token = token[:-1]
+    if token.startswith('"'):
+        token = _unquote_git(token)
+    return _strip_prefix(token)
 
 
 def _split_git_paths(rest: str) -> tuple[str, str] | None:
+    """Split ``diff --git`` into the two path tokens.
+
+    For an ordinary section Git prints ``a/<path> b/<path>`` with the same
+    path on both sides. The split is the space where those two paths are
+    equal after unquoting. A rename or copy has different paths there; the
+    caller uses ``rename to`` / ``copy to`` instead. Two quoted tokens are
+    already separated, so they are not a guess. Any other header is rejected.
+    """
     if rest.endswith("\r"):
         rest = rest[:-1]
     if rest.startswith('"'):
-        first, rest = _take_quoted(rest)
-        second, _remainder = _take_quoted(rest.lstrip())
-        if first is None or second is None:
+        first, remainder = _take_quoted(rest)
+        second, leftover = _take_quoted(remainder.lstrip(" "))
+        if first is None or second is None or leftover or not first or not second:
             return None
         return first, second
-    # Unquoted. A space can belong to the path, so accept the split where both
-    # sides wear a diff prefix, or where noprefix repeated the same path.
-    for index in range(len(rest) - 1, 0, -1):
-        if rest[index] != " ":
+    matches: list[tuple[str, str]] = []
+    for index, char in enumerate(rest):
+        if char != " ":
             continue
         left, right = rest[:index], rest[index + 1 :]
-        if left == right and left:
-            return left, right
-        if _strip_prefix(left) != left and _strip_prefix(right) != right:
-            return left, right
+        if left and right and _path_body(left) == _path_body(right):
+            matches.append((left, right))
+    if len(matches) == 1:
+        return matches[0]
     return None
+
+
+def _header_endpoints(rest: str) -> tuple[str | None, str | None]:
+    parsed = _split_git_paths(rest)
+    if not parsed:
+        return None, None
+    return _path_body(parsed[0]), _path_body(parsed[1])
 
 
 def _diff_lines(diff: str) -> list[str]:
@@ -226,6 +232,7 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
     old_path: str | None = None
     deleted = False
     in_hunk = False
+    in_section = False
     old_line = 0
     new_line = 0
     new_file_mode = False
@@ -247,21 +254,17 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
     for raw in _diff_lines(diff):
         if raw.startswith("diff --git "):
             close()
-            parsed = _split_git_paths(raw[len("diff --git ") :])
+            old_raw, new_raw = _header_endpoints(raw[len("diff --git ") :])
             in_hunk = False
-            deleted = False
+            in_section = True
+            deleted = new_raw == "/dev/null"
             new_file_mode = False
             empty_blob = False
-            old_path = None
+            old_path = None if old_raw in (None, "/dev/null") else old_raw
             path = None
-            if parsed:
-                old_raw, new_raw = parsed
-                old_path = _strip_prefix(old_raw)
-                new_path = _strip_prefix(new_raw)
-                deleted = new_path == "/dev/null"
-                use(old_path if deleted else new_path)
+            use(old_path if deleted else new_raw)
             continue
-        if path is None and old_path is None:
+        if not in_section:
             continue
         if not in_hunk and raw.startswith("--- "):
             value = _header_path(raw[4:])
@@ -279,9 +282,11 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
         if not in_hunk and raw.startswith("rename to "):
             use(_plain_git_path(raw[len("rename to ") :]))
             continue
-        if not in_hunk and (pair := _binary_paths(raw)):
-            old_path = pair[0]
-            use(pair[1])
+        if not in_hunk and raw.startswith("copy from "):
+            old_path = _plain_git_path(raw[len("copy from ") :])
+            continue
+        if not in_hunk and raw.startswith("copy to "):
+            use(_plain_git_path(raw[len("copy to ") :]))
             continue
         if not in_hunk and raw.startswith("new file mode "):
             new_file_mode = True
@@ -333,6 +338,39 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
             in_hunk = False
     close()
     return {name: _collapse(numbers) for name, numbers in lines.items()}
+
+
+def binary_paths(diff: str) -> set[str]:
+    """Paths Git presented as binary, one entry per path.
+
+    The path is the one established by ``diff --git`` (or ``rename to`` /
+    ``copy to``). The ``Binary files`` line is only a notice; its own text
+    is not parsed, because ``/dev/null`` and a path containing `` and b/``
+    do not split on the first `` and ``.
+    """
+    found: set[str] = set()
+    path: str | None = None
+    in_section = False
+    for raw in _diff_lines(diff):
+        if raw.startswith("diff --git "):
+            in_section = True
+            old_raw, new_raw = _header_endpoints(raw[len("diff --git ") :])
+            if new_raw == "/dev/null":
+                path = None if old_raw in (None, "/dev/null") else old_raw
+            else:
+                path = new_raw
+            continue
+        if not in_section:
+            continue
+        if raw.startswith("rename to "):
+            path = _plain_git_path(raw[len("rename to ") :])
+            continue
+        if raw.startswith("copy to "):
+            path = _plain_git_path(raw[len("copy to ") :])
+            continue
+        if path and raw.startswith("Binary files ") and raw.endswith(" differ"):
+            found.add(path)
+    return found
 
 
 def validate(

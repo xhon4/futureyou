@@ -10,6 +10,8 @@ import signal
 import subprocess
 from pathlib import Path
 
+from futureyou.report import binary_paths
+
 MAX_DIFF_CHARS = 60_000
 # Separate from MAX_DIFF_CHARS so a test can shrink the combined diff without
 # also skipping ordinary untracked files. Files this large are not read at all.
@@ -21,6 +23,9 @@ MAX_FRAGMENTS = 5
 MAX_FRAGMENT_LINES = 12
 MIN_TERM_LENGTH = 3
 GIT_TIMEOUT_SECONDS = 60
+# A grandchild that called setsid is outside the process group and can hold
+# the stdout pipe. The read after killpg stops on its own deadline.
+_KILL_DRAIN_SECONDS = 1
 
 _WORD = re.compile(r"[a-z0-9]+")
 _STATUS_LINE = re.compile(r"^\W*status\W*:\s*(.+)$", re.IGNORECASE)
@@ -79,16 +84,70 @@ def _decode(data: bytes | None) -> str:
     return (data or b"").decode("utf-8", errors="backslashreplace")
 
 
+def _append_config(
+    env: dict[bytes, bytes], pairs: tuple[tuple[bytes, bytes], ...]
+) -> None:
+    """Add config pairs after any GIT_CONFIG_COUNT entries already in the environment.
+
+    ``git -c key=value`` splits on the first ``=``, so a driver named ``foo=bar``
+    cannot be disabled that way. ``GIT_CONFIG_KEY_n`` carries the key bytes
+    unchanged, including ``=`` and bytes that are not UTF-8. Later entries
+    override earlier ones, and the entries already in the environment stay.
+    """
+    if not pairs:
+        return
+    raw = env.get(b"GIT_CONFIG_COUNT", b"0").strip()
+    try:
+        count = int(raw) if raw else 0
+    except ValueError:
+        count = 0
+    if count < 0:
+        count = 0
+    for key, value in pairs:
+        env[f"GIT_CONFIG_KEY_{count}".encode("ascii")] = key
+        env[f"GIT_CONFIG_VALUE_{count}".encode("ascii")] = value
+        count += 1
+    env[b"GIT_CONFIG_COUNT"] = str(count).encode("ascii")
+
+
+def _reap(process: subprocess.Popen) -> None:
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    drain = min(GIT_TIMEOUT_SECONDS, _KILL_DRAIN_SECONDS)
+    try:
+        process.communicate(timeout=drain)
+    except subprocess.TimeoutExpired:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        try:
+            process.wait(timeout=drain)
+        except subprocess.TimeoutExpired:
+            pass
+
+
 def _git(
-    repo: Path, *args: str, config: tuple[str, ...] = (), binary: bool = False
+    repo: Path,
+    *args: str,
+    config: tuple[tuple[bytes, bytes], ...] = (),
+    binary: bool = False,
 ) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
+    env = os.environb.copy()
     # Skip optional index refresh so a read does not rewrite `.git/index`.
-    env["GIT_OPTIONAL_LOCKS"] = "0"
-    env.pop("GIT_EXTERNAL_DIFF", None)
+    env[b"GIT_OPTIONAL_LOCKS"] = b"0"
+    env.pop(b"GIT_EXTERNAL_DIFF", None)
     for name in _REPO_LOCATING_ENV:
-        env.pop(name, None)
-    command = ["git", *_GIT_CONFIG, *config, *args]
+        env.pop(name.encode("ascii"), None)
+    _append_config(env, config)
+    command = ["git", *_GIT_CONFIG, *args]
     try:
         process = subprocess.Popen(
             command,
@@ -106,13 +165,7 @@ def _git(
     try:
         stdout, stderr = process.communicate(timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
-        pid = getattr(process, "pid", None)
-        if pid is not None:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate()
+        _reap(process)
         raise RepoError(
             f"git timed out after {GIT_TIMEOUT_SECONDS:g} seconds"
         ) from error
@@ -126,35 +179,44 @@ def _git(
     )
 
 
-def _filter_overrides(repo: Path) -> tuple[str, ...] | None:
+_FILTER_SUFFIXES = (b".clean", b".smudge", b".process", b".required")
+
+
+def _filter_overrides(repo: Path) -> tuple[tuple[bytes, bytes], ...] | None:
     """Disable every configured clean/smudge filter for one read.
 
     An empty command is a no-op, so `git diff` hashes worktree bytes instead
     of running `filter.<name>.clean` (which is how Git LFS writes `.git/lfs`).
+    The driver name is the raw bytes between ``filter.`` and the last suffix,
+    so ``foo.bar``, ``foo=bar``, and a name containing ``0xff`` all match.
     """
-    listed = _git(repo, "config", "-z", "--name-only", "--get-regexp", r"^filter\.")
+    listed = _git(
+        repo,
+        "config",
+        "-z",
+        "--name-only",
+        "--get-regexp",
+        r"^filter\.",
+        binary=True,
+    )
     if listed.returncode not in (0, 1):
         return None
-    suffixes = (".clean", ".smudge", ".process", ".required")
-    names: set[str] = set()
-    for key in listed.stdout.split("\0"):
-        if not key.startswith("filter."):
+    names: set[bytes] = set()
+    for key in (listed.stdout or b"").split(b"\0"):
+        if not key.startswith(b"filter."):
             continue
-        name = key[len("filter.") :]
-        for suffix in suffixes:
-            if name.endswith(suffix):
-                name = name[: -len(suffix)]
+        body = key[len(b"filter.") :]
+        for suffix in _FILTER_SUFFIXES:
+            if body.endswith(suffix) and len(body) > len(suffix):
+                names.add(body[: -len(suffix)])
                 break
-        else:
-            continue
-        if name:
-            names.add(name)
-    flags: list[str] = []
+    pairs: list[tuple[bytes, bytes]] = []
     for name in sorted(names):
-        for suffix in ("clean", "smudge", "process"):
-            flags.extend(["-c", f"filter.{name}.{suffix}="])
-        flags.extend(["-c", f"filter.{name}.required=false"])
-    return tuple(flags)
+        prefix = b"filter." + name + b"."
+        for suffix in (b"clean", b"smudge", b"process"):
+            pairs.append((prefix + suffix, b""))
+        pairs.append((prefix + b"required", b"false"))
+    return tuple(pairs)
 
 
 def resolve_repo(path: Path) -> Path:
@@ -276,11 +338,7 @@ def git_diff(repo_root: Path) -> dict:
             position += len(part)
         diff = diff[:kept]
     submodules = sum(1 for line in diff.split("\n") if _SUBMODULE_LINE.match(line))
-    binary_files = sum(
-        1
-        for line in diff.split("\n")
-        if line.startswith("Binary files ") and line.endswith(" differ")
-    )
+    binary_files = len(binary_paths(diff))
     return {
         "status": "ok" if diff else "no_changes",
         "diff": diff,
