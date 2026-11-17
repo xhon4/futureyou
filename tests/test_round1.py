@@ -261,3 +261,25 @@ def test_short_abbrev_still_recognizes_an_empty_blob(tmp_path):
     diff = tools.git_diff(repo)["diff"]
     assert "empty.txt" in diff
     assert report.validate(_regret("empty.txt", 1, 1), _messages(diff))[0] is None
+
+
+def _scope(result: dict) -> str:
+    return cli.review_scope(
+        [ToolMessage(json.dumps(result), name="get_git_diff", tool_call_id="1")]
+    )
+
+
+def test_scope_does_not_claim_skipped_untracked_files_were_included(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "tracked.txt").write_text("v1\n")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    (repo / "tracked.txt").write_text("v2\n")
+    (repo / "big.txt").write_text("x" * 200_000)
+    result = tools.git_diff(repo)
+    assert result["status"] == "ok"
+    assert result["untracked"] == 0
+    assert result["oversized_untracked"] == 1
+    scope = _scope(result)
+    assert "untracked files included" not in scope
+    assert "over the diff size limit not read" in scope

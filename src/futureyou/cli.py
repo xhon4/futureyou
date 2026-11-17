@@ -64,6 +64,9 @@ def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
     """Describe what the review actually covered, from the real tool results."""
     diffs = report.tool_results(messages, "get_git_diff")
     latest = diffs[-1] if diffs else {}
+    skipped_every_untracked = not latest.get("untracked") and (
+        latest.get("oversized_untracked") or latest.get("nested_skipped")
+    )
     if not diffs:
         diff_scope = "diff not read"
     elif latest.get("status") == "no_changes":
@@ -81,7 +84,13 @@ def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
             f"untracked files {how}"
         )
     elif latest.get("truncated"):
-        diff_scope = f"changes against HEAD, untracked files included; diff truncated at {tools.MAX_DIFF_CHARS:,} characters"
+        included = "" if skipped_every_untracked else ", untracked files included"
+        diff_scope = (
+            f"changes against HEAD{included}; diff truncated at "
+            f"{tools.MAX_DIFF_CHARS:,} characters"
+        )
+    elif skipped_every_untracked:
+        diff_scope = "changes against HEAD; no truncation"
     else:
         diff_scope = "changes against HEAD, untracked files included; no truncation"
     if diffs and latest.get("untracked_skipped", 0):
