@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 from conftest import git
 from langchain_core.messages import ToolMessage
 
@@ -261,6 +262,30 @@ def test_short_abbrev_still_recognizes_an_empty_blob(tmp_path):
     diff = tools.git_diff(repo)["diff"]
     assert "empty.txt" in diff
     assert report.validate(_regret("empty.txt", 1, 1), _messages(diff))[0] is None
+
+
+def test_non_executable_git_is_not_a_model_failure(tmp_path, monkeypatch, capsys):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    program = bindir / "git"
+    program.write_text("#!/bin/sh\nexit 0\n")
+    program.chmod(0o644)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("PATH", str(bindir))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert cli.main(["review", str(repo)]) == 1
+    err = capsys.readouterr().err
+    assert "model call failed" not in err
+    assert "git" in err.lower()
+
+
+def test_rev_parse_failure_includes_git_stderr(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(tools.RepoError, match="not a Git repository") as caught:
+        tools.resolve_repo(plain)
+    assert "fatal:" in str(caught.value)
 
 
 def _scope(result: dict) -> str:

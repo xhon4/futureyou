@@ -98,6 +98,8 @@ def _git(
         )
     except FileNotFoundError as error:
         raise RepoError("git was not found on PATH") from error
+    except OSError as error:
+        raise RepoError(f"could not run git: {error}") from error
     except subprocess.TimeoutExpired as error:
         raise RepoError(
             f"git timed out after {GIT_TIMEOUT_SECONDS:g} seconds"
@@ -149,12 +151,15 @@ def resolve_repo(path: Path) -> Path:
         raise RepoError(f"{path} is not a directory")
     top = _git(path, "rev-parse", "--show-toplevel")
     if top.returncode != 0:
-        raise RepoError(f"{path} is not a Git repository")
+        detail = top.stderr.strip()
+        message = f"{path} is not a Git repository"
+        raise RepoError(f"{message}: {detail}" if detail else message)
     root = Path(top.stdout.strip()).resolve()
-    if _git(root, "rev-parse", "--verify", "--quiet", "HEAD").returncode != 0:
-        raise RepoError(
-            f"{root} has no commits yet; FutureYou compares changes against HEAD"
-        )
+    head = _git(root, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode != 0:
+        detail = head.stderr.strip()
+        message = f"{root} has no commits yet; FutureYou compares changes against HEAD"
+        raise RepoError(f"{message}: {detail}" if detail else message)
     return root
 
 
