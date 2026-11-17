@@ -153,7 +153,7 @@ def render(findings: list[Finding], messages: list[BaseMessage]) -> str:
         change_error, decision_error = validate(finding, messages)
         invalid = bool(change_error or decision_error)
 
-        def mark(error: str | None) -> str:
+        def mark(error: str | None, invalid: bool = invalid) -> str:
             return f"  ✗ {error}" if error else "  ✓" if invalid else ""
 
         lines = [

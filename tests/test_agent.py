@@ -124,7 +124,9 @@ def test_review_generates_and_prints_a_thread_id(
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
     thread_lines = [
-        l for l in capsys.readouterr().out.splitlines() if l.startswith("Thread: ")
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("Thread: ")
     ]
     assert len(thread_lines) == 1 and len(thread_lines[0].removeprefix("Thread: ")) == 8
 

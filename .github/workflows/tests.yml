@@ -7,8 +7,15 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    env:
+      # Ignore the runner's Git config so quotePath, fsmonitor, and filters
+      # cannot change the result. No API credentials are set.
+      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_NOSYSTEM: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
       - run: uv run pytest

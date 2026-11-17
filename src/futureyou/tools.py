@@ -96,7 +96,9 @@ def _adr_status(lines: list[str]) -> str:
         if match := _STATUS_LINE.match(line.strip()):
             return match.group(1).strip(" *_")
         if _STATUS_HEADING.match(line.strip()):
-            following = next((l.strip() for l in lines[i + 1 :] if l.strip()), "")
+            following = next(
+                (item.strip() for item in lines[i + 1 :] if item.strip()), ""
+            )
             return following.strip(" *_") or "unknown"
     return "unknown"
 

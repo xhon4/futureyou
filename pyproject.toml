@@ -22,7 +22,21 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
+    "ruff>=0.17.5",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F are the default correctness checks. I keeps the import layout stable.
+# UP matches the 3.12 baseline. B flags real bug patterns (the loop closure in render).
+# E501 is off because ruff format owns wrapping and cannot break every long string.
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["futureyou"]

@@ -1,8 +1,24 @@
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
 import pytest
+
+# The suite must stay runnable without a provider account.
+_PROVIDER_ENV = (
+    "ANTHROPIC_API_KEY",
+    "FUTUREYOU_MODEL",
+    "GOOGLE_API_KEY",
+    "LANGCHAIN_API_KEY",
+    "LANGCHAIN_TRACING_V2",
+    "LANGSMITH_API_KEY",
+    "LANGSMITH_TRACING",
+    "OPENAI_API_BASE",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+)
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
@@ -21,6 +37,24 @@ def git(repo: Path, *args: str) -> None:
         check=True,
         capture_output=True,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_provider_and_no_network(monkeypatch):
+    """Drop provider credentials and fail if a test opens a TCP connection."""
+    for name in _PROVIDER_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+    def refuse_connect(self, address):
+        raise AssertionError(f"tests must not connect to {address}")
+
+    def refuse_connection(*args, **kwargs):
+        target = args[0] if args else kwargs.get("address")
+        raise AssertionError(f"tests must not connect to {target}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse_connect)
+    monkeypatch.setattr(socket, "create_connection", refuse_connection)
 
 
 @pytest.fixture
