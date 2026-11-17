@@ -1,6 +1,7 @@
 """Round-1 review regressions. Each test failed on aa75c61 before its fix."""
 
 import json
+import os
 from pathlib import Path
 
 from conftest import git
@@ -236,3 +237,18 @@ def test_symlinked_docs_parent_is_not_searched(tmp_path):
     assert result["status"] == "no_adrs"
     assert result["fragments"] == []
     assert "OUTSIDE_TOKEN" not in str(result)
+
+
+def test_undecodable_untracked_name_does_not_drop_the_tracked_edit(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "tracked.txt").write_text("safe\n")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    (repo / "tracked.txt").write_text("safe changed\n")
+    raw_name = bytes([0xFF]) + b"name.txt"
+    fd = os.open(repo / os.fsdecode(raw_name), os.O_CREAT | os.O_WRONLY, 0o644)
+    os.write(fd, b"secret\n")
+    os.close(fd)
+    result = tools.git_diff(repo)
+    assert result["status"] == "ok"
+    assert "safe changed" in result["diff"]

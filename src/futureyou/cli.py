@@ -54,6 +54,9 @@ def _coverage_notes(diff: dict) -> str:
     if count := diff.get("binary_files") or 0:
         noun = "file" if count == 1 else "files"
         notes.append(f"{count} {noun} shown as binary, not reviewed")
+    if count := diff.get("undecodable_untracked") or 0:
+        noun = "name" if count == 1 else "names"
+        notes.append(f"{count} untracked {noun} skipped because they are not valid paths")
     return "".join(f"; {note}" for note in notes)
 
 

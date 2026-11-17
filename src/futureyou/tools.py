@@ -79,8 +79,8 @@ def _decode(data: bytes | None) -> str:
 
 
 def _git(
-    repo: Path, *args: str, config: tuple[str, ...] = ()
-) -> subprocess.CompletedProcess[str]:
+    repo: Path, *args: str, config: tuple[str, ...] = (), binary: bool = False
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     # Skip optional index refresh so a read does not rewrite `.git/index`.
     env["GIT_OPTIONAL_LOCKS"] = "0"
@@ -102,6 +102,8 @@ def _git(
         raise RepoError(
             f"git timed out after {GIT_TIMEOUT_SECONDS:g} seconds"
         ) from error
+    if binary:
+        return completed
     return subprocess.CompletedProcess(
         completed.args,
         completed.returncode,
@@ -186,16 +188,28 @@ def git_diff(repo_root: Path) -> dict:
         "--exclude-standard",
         "-z",
         config=overrides,
+        binary=True,
     )
     if listing.returncode != 0:
-        return _git_error(listing)
+        return {"status": "error", "message": _decode(listing.stderr).strip()}
 
     nested: list[str] = []
     candidates: list[str] = []
-    for name in listing.stdout.split("\0"):
-        if not name:
+    undecodable = 0
+    for raw_name in listing.stdout.split(b"\0"):
+        if not raw_name:
+            continue
+        try:
+            name = os.fsdecode(raw_name)
+        except UnicodeDecodeError:
+            undecodable += 1
             continue
         path = repo_root / name
+        try:
+            path.lstat()
+        except OSError:
+            undecodable += 1
+            continue
         if path.is_symlink():
             continue
         if path.is_dir():
@@ -262,6 +276,7 @@ def git_diff(repo_root: Path) -> dict:
         "untracked_retained": retained,
         "submodules": submodules,
         "binary_files": binary_files,
+        "undecodable_untracked": undecodable,
     }
 
 
