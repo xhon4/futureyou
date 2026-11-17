@@ -1,0 +1,70 @@
+"""Round-1 review regressions. Each test failed on aa75c61 before its fix."""
+
+import json
+from pathlib import Path
+
+from conftest import git
+from langchain_core.messages import ToolMessage
+
+from futureyou import report, tools
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / "README.md").write_text("base\n")
+    git(repo, "add", "README.md")
+    git(repo, "commit", "-q", "-m", "base")
+    return repo
+
+
+def _regret(path: str, start: int, end: int) -> report.Finding:
+    return report.Finding(
+        type="Potential regret",
+        title="t",
+        why="w",
+        suggestion="s",
+        change_path=path,
+        change_start=start,
+        change_end=end,
+    )
+
+
+def _messages(diff: str) -> list[ToolMessage]:
+    payload = {"diff": diff, "status": "ok"}
+    return [ToolMessage(json.dumps(payload), name="get_git_diff", tool_call_id="1")]
+
+
+def test_cr_inside_a_line_does_not_forge_a_hunk():
+    diff = (
+        "diff --git a/f.py b/f.py\n"
+        "--- a/f.py\n"
+        "+++ b/f.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+real\r@@ -1,1 +80,1 @@\n"
+        "+still\n"
+    )
+    ranges = report.diff_ranges(diff)
+    assert report.validate(_regret("f.py", 80, 80), _messages(diff))[0] is not None
+    assert not any(start <= 80 <= end for start, end in ranges.get("f.py", []))
+    assert report.validate(_regret("f.py", 1, 1), _messages(diff))[0] is None
+
+
+def test_formfeed_does_not_retarget_a_later_hunk(tmp_path):
+    repo = _repo(tmp_path)
+    lines = [f"line{i}" for i in range(1, 31)]
+    target = repo / "real.py"
+    target.write_text("\n".join(lines) + "\n")
+    git(repo, "add", "real.py")
+    git(repo, "commit", "-q", "-m", "add")
+    edited = lines.copy()
+    edited[1] = "\f"
+    edited.insert(2, "++ b/innocent.py")
+    edited[25] = "changed-line-25"
+    target.write_text("\n".join(edited) + "\n")
+    diff = tools.git_diff(repo)["diff"]
+    ranges = report.diff_ranges(diff)
+    assert "innocent.py" not in ranges, ranges
+    assert ranges.get("real.py"), ranges

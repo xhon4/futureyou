@@ -150,6 +150,20 @@ def _split_git_paths(rest: str) -> tuple[str, str] | None:
     return None
 
 
+def _diff_lines(diff: str) -> list[str]:
+    """Split a diff on LF only.
+
+    ``str.splitlines`` also breaks on CR, VT, FF and Unicode line separators.
+    Those bytes can appear inside a changed line, and treating them as line
+    breaks lets a forged hunk header or ``+++`` marker retarget the parser.
+    A trailing CR is the CRLF separator, not part of the line.
+    """
+    lines = diff.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
 def _collapse(numbers: set[int]) -> list[tuple[int, int]]:
     if not numbers:
         return []
@@ -199,7 +213,7 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
         if path and new_file_mode and empty_blob and not lines.get(path):
             lines[path].add(1)
 
-    for raw in diff.splitlines():
+    for raw in _diff_lines(diff):
         if raw.startswith("diff --git "):
             close()
             parsed = _split_git_paths(raw[len("diff --git ") :])
