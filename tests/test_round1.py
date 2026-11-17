@@ -252,3 +252,12 @@ def test_undecodable_untracked_name_does_not_drop_the_tracked_edit(tmp_path):
     result = tools.git_diff(repo)
     assert result["status"] == "ok"
     assert "safe changed" in result["diff"]
+
+
+def test_short_abbrev_still_recognizes_an_empty_blob(tmp_path):
+    repo = _repo(tmp_path)
+    git(repo, "config", "core.abbrev", "4")
+    (repo / "empty.txt").write_text("")
+    diff = tools.git_diff(repo)["diff"]
+    assert "empty.txt" in diff
+    assert report.validate(_regret("empty.txt", 1, 1), _messages(diff))[0] is None

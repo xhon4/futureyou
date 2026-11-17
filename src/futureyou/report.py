@@ -52,7 +52,7 @@ def tool_results(messages: list[BaseMessage], name: str) -> list[dict]:
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _DIFF_PREFIXES = ("a/", "b/", "c/", "i/", "w/")
-_EMPTY_BLOB = "e69de29"
+_EMPTY_BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 _OCTAL = set("01234567")
 _GIT_ESCAPES = {
     "a": b"\a",
@@ -289,7 +289,8 @@ def diff_ranges(diff: str) -> dict[str, list[tuple[int, int]]]:
         if not in_hunk and raw.startswith("index "):
             parts = raw.split()
             if len(parts) >= 2 and ".." in parts[1]:
-                empty_blob = parts[1].split("..", 1)[1].startswith(_EMPTY_BLOB)
+                abbrev = parts[1].split("..", 1)[1]
+                empty_blob = len(abbrev) >= 4 and _EMPTY_BLOB.startswith(abbrev)
             continue
         match = _HUNK.match(raw)
         if match and path is not None:
