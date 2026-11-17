@@ -41,21 +41,47 @@ def _config(thread: str) -> dict:
     }
 
 
+def _coverage_notes(diff: dict) -> str:
+    notes = []
+    if count := diff.get("nested_skipped") or 0:
+        noun = "repo" if count == 1 else "repos"
+        notes.append(f"{count} untracked nested git {noun} not read")
+    if count := diff.get("oversized_untracked") or 0:
+        noun = "file" if count == 1 else "files"
+        notes.append(f"{count} untracked {noun} over the diff size limit not read")
+    if diff.get("submodules"):
+        notes.append("submodule contents not reviewed")
+    return "".join(f"; {note}" for note in notes)
+
+
 def review_scope(messages: list[BaseMessage], invalid_evidence: int = 0) -> str:
     """Describe what the review actually covered, from the real tool results."""
     diffs = report.tool_results(messages, "get_git_diff")
+    latest = diffs[-1] if diffs else {}
     if not diffs:
         diff_scope = "diff not read"
-    elif diffs[-1].get("status") == "no_changes":
+    elif latest.get("status") == "no_changes":
         diff_scope = "no changes against HEAD"
-    elif diffs[-1].get("status") != "ok":
+    elif latest.get("status") != "ok":
         diff_scope = "Git diff failed"
-    elif diffs[-1].get("truncated"):
+    elif latest.get("truncated") and latest.get("untracked_cut"):
+        how = (
+            "partially included"
+            if latest.get("untracked_retained")
+            else "omitted by truncation"
+        )
+        diff_scope = (
+            f"changes against HEAD; diff truncated at {tools.MAX_DIFF_CHARS:,} characters; "
+            f"untracked files {how}"
+        )
+    elif latest.get("truncated"):
         diff_scope = f"changes against HEAD, untracked files included; diff truncated at {tools.MAX_DIFF_CHARS:,} characters"
     else:
         diff_scope = "changes against HEAD, untracked files included; no truncation"
-    if diffs and diffs[-1].get("untracked_skipped", 0):
-        diff_scope += f"; {diffs[-1]['untracked_skipped']} untracked files over the {tools.MAX_UNTRACKED_FILES}-file limit not read"
+    if diffs and latest.get("untracked_skipped", 0):
+        diff_scope += f"; {latest['untracked_skipped']} untracked files over the {tools.MAX_UNTRACKED_FILES}-file limit not read"
+    if diffs:
+        diff_scope += _coverage_notes(latest)
 
     statuses = {
         result.get("status")
@@ -164,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             f"futureyou: the review stopped after {agent.RECURSION_LIMIT} steps without a report",
             file=sys.stderr,
         )
+    except UnicodeDecodeError as error:
+        print(f"futureyou: could not decode Git output: {error}", file=sys.stderr)
     except Exception as error:  # Provider, authentication and network errors.
         print(
             f"futureyou: model call failed: {type(error).__name__}: {error}",

@@ -4,11 +4,15 @@ These functions know nothing about the model or the CLI. They return plain
 dicts so the agent can pass them to the model and tests can assert on them.
 """
 
+import os
 import re
 import subprocess
 from pathlib import Path
 
 MAX_DIFF_CHARS = 60_000
+# Separate from MAX_DIFF_CHARS so a test can shrink the combined diff without
+# also skipping ordinary untracked files. Files this large are not read at all.
+MAX_UNTRACKED_BYTES = MAX_DIFF_CHARS
 MAX_UNTRACKED_FILES = 200
 MAX_ADR_FILES = 100
 MAX_ADR_BYTES = 64 * 1024
@@ -19,16 +23,92 @@ MIN_TERM_LENGTH = 3
 _WORD = re.compile(r"[a-z0-9]+")
 _STATUS_LINE = re.compile(r"^\W*status\W*:\s*(.+)$", re.IGNORECASE)
 _STATUS_HEADING = re.compile(r"^#+\s*status\s*$", re.IGNORECASE)
+_SUBMODULE_LINE = re.compile(r"^[ +-]Subproject commit [0-9a-f]+")
+
+# `-c` outranks repository, environment, and system config. A reviewed repo
+# therefore cannot re-enable quoting, mnemonic prefixes, clean/smudge filters,
+# fsmonitor, or hooks for the read. `--no-ext-diff` also blocks GIT_EXTERNAL_DIFF.
+_GIT_CONFIG = (
+    "-c",
+    "core.quotepath=false",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.autocrlf=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.submodule=short",
+    "-c",
+    "diff.external=",
+    "-c",
+    "color.ui=false",
+    "-c",
+    "submodule.recurse=false",
+    "-c",
+    "advice.detachedHead=false",
+)
+_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color")
 
 
 class RepoError(Exception):
     """The given path cannot be reviewed."""
 
 
-def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, shell=False
+def _decode(data: bytes | None) -> str:
+    return (data or b"").decode("utf-8", errors="backslashreplace")
+
+
+def _git(
+    repo: Path, *args: str, config: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    # Skip optional index refresh so a read does not rewrite `.git/index`.
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    env.pop("GIT_EXTERNAL_DIFF", None)
+    try:
+        completed = subprocess.run(
+            ["git", *_GIT_CONFIG, *config, *args],
+            cwd=repo,
+            capture_output=True,
+            env=env,
+            shell=False,
+        )
+    except FileNotFoundError as error:
+        raise RepoError("git was not found on PATH") from error
+    return subprocess.CompletedProcess(
+        completed.args,
+        completed.returncode,
+        _decode(completed.stdout),
+        _decode(completed.stderr),
     )
+
+
+def _filter_overrides(repo: Path) -> tuple[str, ...] | None:
+    """Disable every configured clean/smudge filter for one read.
+
+    An empty command is a no-op, so `git diff` hashes worktree bytes instead
+    of running `filter.<name>.clean` (which is how Git LFS writes `.git/lfs`).
+    """
+    listed = _git(repo, "config", "--get-regexp", r"^filter\.")
+    if listed.returncode not in (0, 1):
+        return None
+    names: set[str] = set()
+    for line in listed.stdout.splitlines():
+        key = line.split(" ", 1)[0]
+        parts = key.split(".")
+        if len(parts) >= 3 and parts[0] == "filter" and parts[1]:
+            names.add(parts[1])
+    flags: list[str] = []
+    for name in sorted(names):
+        for suffix in ("clean", "smudge", "process"):
+            flags.extend(["-c", f"filter.{name}.{suffix}="])
+        flags.extend(["-c", f"filter.{name}.required=false"])
+    return tuple(flags)
 
 
 def resolve_repo(path: Path) -> Path:
@@ -46,48 +126,106 @@ def resolve_repo(path: Path) -> Path:
     return root
 
 
+def _git_error(result: subprocess.CompletedProcess[str]) -> dict:
+    return {"status": "error", "message": result.stderr.strip()}
+
+
 def git_diff(repo_root: Path) -> dict:
-    """Changes against HEAD, including non-ignored untracked files, without modifying the index."""
-    result = _git(
-        repo_root, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD"
+    """Staged and unstaged changes against HEAD, plus non-ignored untracked files.
+
+    The index is not modified. Clean/smudge filters and hooks are not run.
+    Nested untracked Git repositories and submodule contents are not read;
+    the result says so instead of counting them as included.
+    """
+    overrides = _filter_overrides(repo_root)
+    if overrides is None:
+        return {"status": "error", "message": "could not read Git filter configuration"}
+
+    staged = _git(repo_root, "diff", "--cached", *_DIFF_FLAGS, config=overrides)
+    if staged.returncode != 0:
+        return _git_error(staged)
+    unstaged = _git(repo_root, "diff", *_DIFF_FLAGS, config=overrides)
+    if unstaged.returncode != 0:
+        return _git_error(unstaged)
+    tracked = staged.stdout + unstaged.stdout
+
+    listing = _git(
+        repo_root,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        config=overrides,
     )
-    if result.returncode != 0:
-        return {"status": "error", "message": result.stderr.strip()}
-    diff = result.stdout
-    listing = _git(repo_root, "ls-files", "--others", "--exclude-standard", "-z")
     if listing.returncode != 0:
-        return {"status": "error", "message": listing.stderr.strip()}
-    files = [
-        name
-        for name in listing.stdout.split("\0")
-        if name and not (repo_root / name).is_symlink()
-    ]
-    included = files[:MAX_UNTRACKED_FILES]
+        return _git_error(listing)
+
+    nested: list[str] = []
+    candidates: list[str] = []
+    for name in listing.stdout.split("\0"):
+        if not name:
+            continue
+        path = repo_root / name
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            nested.append(name.rstrip("/"))
+            continue
+        candidates.append(name)
+
+    included = candidates[:MAX_UNTRACKED_FILES]
+    untracked_skipped = len(candidates) - len(included)
+    parts: list[str] = []
+    oversized = 0
     for name in included:
+        path = repo_root / name
+        try:
+            size = path.stat().st_size
+        except OSError as error:
+            return {"status": "error", "message": f"open({name!r}): {error}"}
+        if size >= MAX_UNTRACKED_BYTES:
+            oversized += 1
+            continue
         result = _git(
             repo_root,
             "diff",
             "--no-index",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
+            *_DIFF_FLAGS,
             "--",
             "/dev/null",
             name,
+            config=overrides,
         )
         if result.returncode not in (0, 1):
-            return {"status": "error", "message": result.stderr.strip()}
-        diff += result.stdout
+            return _git_error(result)
+        parts.append(result.stdout)
+
+    diff = tracked + "".join(parts)
     truncated = len(diff) > MAX_DIFF_CHARS
+    untracked_cut = 0
+    retained = False
     if truncated:
         cut = diff.rfind("\n", 0, MAX_DIFF_CHARS) + 1
-        diff = diff[: cut or MAX_DIFF_CHARS]
+        kept = cut or MAX_DIFF_CHARS
+        retained = kept > len(tracked) and bool(parts)
+        position = len(tracked)
+        for part in parts:
+            if position >= kept or position + len(part) > kept:
+                untracked_cut += 1
+            position += len(part)
+        diff = diff[:kept]
+    submodules = sum(1 for line in diff.splitlines() if _SUBMODULE_LINE.match(line))
     return {
-        "status": "ok" if diff or files else "no_changes",
+        "status": "ok" if diff else "no_changes",
         "diff": diff,
         "truncated": truncated,
-        "untracked": len(included),
-        "untracked_skipped": len(files) - len(included),
+        "untracked": len(parts),
+        "untracked_skipped": untracked_skipped,
+        "nested_skipped": len(nested),
+        "oversized_untracked": oversized,
+        "untracked_cut": untracked_cut,
+        "untracked_retained": retained,
+        "submodules": submodules,
     }
 
 

@@ -46,6 +46,11 @@ def test_git_diff_reports_no_changes(sample_repo: Path):
         "truncated": False,
         "untracked": 0,
         "untracked_skipped": 0,
+        "nested_skipped": 0,
+        "oversized_untracked": 0,
+        "untracked_cut": 0,
+        "untracked_retained": False,
+        "submodules": 0,
     }
 
 
