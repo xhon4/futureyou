@@ -187,7 +187,11 @@ It runs on every push through GitHub Actions.
   review scope says so in both cases.
 - An untracked file of at least 60,000 bytes is skipped. Smaller untracked
   files are read whole, and the combined diff is then cut to 60,000 characters.
+  The tracked diff is also read in full before that cut; it is not streamed.
   A Git command that runs longer than 60 seconds stops the review.
+- A repository that already uses a split index can have its shared index
+  timestamp refreshed by Git during the read. `core.splitIndex=false` does
+  not stop that on Git 2.43.
 - `search_decisions` reads only Markdown files placed directly in `docs/adr/`
   (not subdirectories), ignores query terms shorter than three characters, and
   returns at most five fragments. Hitting those limits can still be reported
