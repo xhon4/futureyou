@@ -7,15 +7,28 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    env:
-      # Ignore the runner's Git config so quotePath, fsmonitor, and filters
-      # cannot change the result. No API credentials are set.
-      GIT_CONFIG_GLOBAL: /dev/null
-      GIT_CONFIG_NOSYSTEM: "1"
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v6
+      # Isolate Git config only for the commands under test. Setting it on
+      # the whole job makes actions/checkout unable to update safe.directory.
       - run: uv sync --locked
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
       - run: uv run ruff check
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
       - run: uv run ruff format --check
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
       - run: uv run pytest
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
