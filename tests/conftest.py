@@ -8,16 +8,29 @@ import pytest
 # The suite must stay runnable without a provider account.
 _PROVIDER_ENV = (
     "ANTHROPIC_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_ENDPOINT",
+    "COHERE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "FIREWORKS_API_KEY",
     "FUTUREYOU_MODEL",
+    "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "GOOGLE_GENAI_API_KEY",
+    "GROQ_API_KEY",
+    "HF_TOKEN",
+    "HUGGINGFACEHUB_API_TOKEN",
     "LANGCHAIN_API_KEY",
     "LANGCHAIN_TRACING_V2",
     "LANGSMITH_API_KEY",
     "LANGSMITH_TRACING",
+    "MISTRAL_API_KEY",
     "OPENAI_API_BASE",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENAI_ORG_ID",
+    "TOGETHER_API_KEY",
+    "XAI_API_KEY",
 )
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
@@ -54,6 +67,7 @@ def _no_provider_and_no_network(monkeypatch):
 
     monkeypatch.setattr(socket.socket, "connect", refuse_connect)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse_connect)
+    monkeypatch.setattr(socket.socket, "sendto", refuse_connect)
     monkeypatch.setattr(socket, "create_connection", refuse_connection)
 
 
