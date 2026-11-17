@@ -102,15 +102,23 @@ def _filter_overrides(repo: Path) -> tuple[str, ...] | None:
     An empty command is a no-op, so `git diff` hashes worktree bytes instead
     of running `filter.<name>.clean` (which is how Git LFS writes `.git/lfs`).
     """
-    listed = _git(repo, "config", "--get-regexp", r"^filter\.")
+    listed = _git(repo, "config", "-z", "--name-only", "--get-regexp", r"^filter\.")
     if listed.returncode not in (0, 1):
         return None
+    suffixes = (".clean", ".smudge", ".process", ".required")
     names: set[str] = set()
-    for line in listed.stdout.splitlines():
-        key = line.split(" ", 1)[0]
-        parts = key.split(".")
-        if len(parts) >= 3 and parts[0] == "filter" and parts[1]:
-            names.add(parts[1])
+    for key in listed.stdout.split("\0"):
+        if not key.startswith("filter."):
+            continue
+        name = key[len("filter.") :]
+        for suffix in suffixes:
+            if name.endswith(suffix):
+                name = name[: -len(suffix)]
+                break
+        else:
+            continue
+        if name:
+            names.add(name)
     flags: list[str] = []
     for name in sorted(names):
         for suffix in ("clean", "smudge", "process"):

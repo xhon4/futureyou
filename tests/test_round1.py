@@ -165,3 +165,30 @@ def test_binary_attribute_is_disclosed_and_not_forced_to_text(tmp_path):
         [ToolMessage(json.dumps(result), name="get_git_diff", tool_call_id="1")]
     )
     assert "shown as binary, not reviewed" in scope
+
+
+def _writer(path: Path, marker: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        f"mkdir -p .git/evil && echo x > {marker}\n"
+        "printf 'POINTER\\n'\n"
+    )
+    path.chmod(0o755)
+
+
+def test_dotted_filter_driver_does_not_run(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "tracked.txt").write_text("v1\n")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-q", "-m", "add")
+    script = tmp_path / "clean.sh"
+    marker = repo / ".git" / "evil" / "ran"
+    _writer(script, marker)
+    git(repo, "config", "filter.foo.bar.clean", str(script))
+    git(repo, "config", "filter.foo.bar.required", "true")
+    (repo / ".gitattributes").write_text("* filter=foo.bar\n")
+    (repo / "tracked.txt").write_text("v2\n")
+    result = tools.git_diff(repo)
+    assert "v2" in result["diff"]
+    assert "POINTER" not in result["diff"]
+    assert not marker.exists()
