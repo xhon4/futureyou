@@ -329,3 +329,33 @@ def test_git_commands_pin_safe_config(tmp_path, monkeypatch):
         assert "core.fsmonitor=false" in cmd
         assert "core.hooksPath=/dev/null" in cmd
         assert env.get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+def test_git_subprocess_times_out_after_60_seconds(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "a.txt").write_text("z\n")
+    timeouts = []
+    real = subprocess.run
+
+    def spy(cmd, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real(cmd, **kwargs)
+
+    monkeypatch.setattr(tools.subprocess, "run", spy)
+    tools.git_diff(repo)
+    assert timeouts
+    assert timeouts == [60] * len(timeouts)
+
+
+def test_git_timeout_is_not_called_a_model_failure(tmp_path, monkeypatch, capsys):
+    repo = _repo(tmp_path)
+
+    def timed_out(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout") or 60)
+
+    monkeypatch.setattr(tools.subprocess, "run", timed_out)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert cli.main(["review", str(repo), "--thread", "slow"]) == 1
+    err = capsys.readouterr().err
+    assert "model call failed" not in err
+    assert "timed out" in err.lower()

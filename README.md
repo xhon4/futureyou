@@ -187,7 +187,7 @@ It runs on every push through GitHub Actions.
   review scope says so in both cases.
 - An untracked file of at least 60,000 bytes is skipped. Smaller untracked
   files are read whole, and the combined diff is then cut to 60,000 characters.
-  Git commands are not given a time limit.
+  A Git command that runs longer than 60 seconds stops the review.
 - `search_decisions` reads only Markdown files placed directly in `docs/adr/`
   (not subdirectories), ignores query terms shorter than three characters, and
   returns at most five fragments. Hitting those limits can still be reported

@@ -19,6 +19,7 @@ MAX_ADR_BYTES = 64 * 1024
 MAX_FRAGMENTS = 5
 MAX_FRAGMENT_LINES = 12
 MIN_TERM_LENGTH = 3
+GIT_TIMEOUT_SECONDS = 60
 
 _WORD = re.compile(r"[a-z0-9]+")
 _STATUS_LINE = re.compile(r"^\W*status\W*:\s*(.+)$", re.IGNORECASE)
@@ -77,9 +78,14 @@ def _git(
             capture_output=True,
             env=env,
             shell=False,
+            timeout=GIT_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as error:
         raise RepoError("git was not found on PATH") from error
+    except subprocess.TimeoutExpired as error:
+        raise RepoError(
+            f"git timed out after {GIT_TIMEOUT_SECONDS:g} seconds"
+        ) from error
     return subprocess.CompletedProcess(
         completed.args,
         completed.returncode,
