@@ -315,7 +315,7 @@ def test_review_scope_reports_truncation(
     assert cli.main(["review", str(contradicting_repo)]) == 0
 
     assert (
-        "Review scope: changes against HEAD, untracked files included; diff truncated at 200 characters; ADRs searched.\n"
+        "Review scope: changes against HEAD, untracked files included; diff truncated at 200 characters; ADRs searched; 1 finding(s) with invalid evidence.\n"
         in (capsys.readouterr().out)
     )
 
