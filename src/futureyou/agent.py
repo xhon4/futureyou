@@ -81,11 +81,13 @@ def route_start(state: State) -> Literal["read_diff", "agent"]:
     return "read_diff" if state["mode"] == "review" else "agent"
 
 
-def route_diff(state: State) -> Literal["agent", "__end__"]:
+def route_diff(state: State) -> Literal["agent", "note_scope", "__end__"]:
     """Only a readable, non-empty diff reaches the model; the CLI reports the other cases."""
-    return (
-        "agent" if json.loads(state["messages"][-1].content)["status"] == "ok" else END
-    )
+    status = json.loads(state["messages"][-1].content)["status"]
+    if status == "ok":
+        return "agent"
+    # Keep the scope in the transcript. An error still stops with no extra message.
+    return "note_scope" if status == "no_changes" else END
 
 
 class DeferredModel:
@@ -144,6 +146,18 @@ def build_graph(model, repo_root: Path, checkpointer=None):
             ]
         }
 
+    def note_scope(state: State) -> dict:
+        """Record the scope for a review that never calls the model."""
+        from futureyou.cli import review_scope
+
+        return {
+            "messages": [
+                AIMessage(
+                    review_scope(state["messages"], state.get("invalid_evidence", 0))
+                )
+            ]
+        }
+
     def make_report(state: State) -> dict:
         structured = model.with_structured_output(report.Report).invoke(
             [SystemMessage(prompts.REPORT), *state["messages"]]
@@ -152,17 +166,26 @@ def build_graph(model, repo_root: Path, checkpointer=None):
         invalid = sum(
             any(report.validate(finding, state["messages"])) for finding in findings
         )
+        # Imported here: cli imports this module at load time.
+        from futureyou.cli import review_scope
+
+        rendered = report.render(findings, state["messages"])
         return {
-            "messages": [AIMessage(report.render(findings, state["messages"]))],
+            "messages": [
+                AIMessage(review_scope(state["messages"], invalid)),
+                AIMessage(rendered),
+            ],
             "invalid_evidence": invalid,
         }
 
     graph = StateGraph(State)
     graph.add_node("read_diff", read_diff)
+    graph.add_node("note_scope", note_scope)
     graph.add_node("agent", agent)
     # get_git_diff stays out of the node. read_diff calls tools.git_diff itself.
     graph.add_node("tools", ToolNode([search_decisions]))
     graph.add_node("report", make_report)
+    graph.add_edge("note_scope", END)
     graph.add_edge("report", END)
     graph.add_conditional_edges(START, route_start)
     graph.add_conditional_edges("read_diff", route_diff)

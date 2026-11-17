@@ -115,6 +115,41 @@ def test_ask_recovers_the_review_after_reopening_sqlite(
     assert (tmp_path / "data" / "futureyou" / "checkpoints.sqlite").is_file()
 
 
+def _message_text(message) -> str:
+    content = getattr(message, "content", "")
+    return content if isinstance(content, str) else str(content)
+
+
+def test_ask_sees_the_scope_line_saved_with_the_review(
+    models, contradicting_repo: Path, capsys
+):
+    queue, created = models
+    queue += [review_replies(), [AIMessage("The scope is above.")]]
+    assert cli.main(["review", str(contradicting_repo), "--thread", "scoped"]) == 0
+    scope_line = next(
+        line
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("Review scope:")
+    )
+    assert cli.main(["ask", "--thread", "scoped", "What was the scope?"]) == 0
+    ask_messages = created[1].seen[0]
+    assert any(scope_line in _message_text(message) for message in ask_messages)
+    assert ask_messages[-1].content == "What was the scope?"
+    assert ask_messages[-2].content == REPORT
+
+
+def test_ask_after_a_clean_review_sees_the_scope(models, sample_repo: Path, capsys):
+    queue, created = models
+    queue.append([AIMessage("Nothing changed.")])
+    assert cli.main(["review", str(sample_repo), "--thread", "clean-scope"]) == 0
+    assert cli.main(["ask", "--thread", "clean-scope", "Anything?"]) == 0
+    ask_messages = created[0].seen[0]
+    assert any(
+        "Review scope: no changes against HEAD" in _message_text(message)
+        for message in ask_messages
+    )
+
+
 def test_review_generates_and_prints_a_thread_id(
     models, contradicting_repo: Path, capsys
 ):
