@@ -45,25 +45,81 @@ def _bindings(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str, str]]
     return modules, functions
 
 
+def _annotation_ids(tree: ast.AST) -> set[int]:
+    """Nodes that only name a type. ``process: subprocess.Popen`` is not a launch."""
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        annotations: list[ast.AST] = []
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if node.returns is not None:
+                annotations.append(node.returns)
+            args = node.args
+            for arg in (
+                *args.posonlyargs,
+                *args.args,
+                args.vararg,
+                *args.kwonlyargs,
+                args.kwarg,
+            ):
+                if arg is not None and arg.annotation is not None:
+                    annotations.append(arg.annotation)
+        elif isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            annotations.append(node.annotation)
+        for annotation in annotations:
+            found.update(id(child) for child in ast.walk(annotation))
+    return found
+
+
 def _launches(tree: ast.AST) -> list[tuple[int, str]]:
-    """Process launches found in one module, as ``(lineno, module.name)``."""
+    """Process launches found in one module, as ``(lineno, module.name)``.
+
+    A reference counts even when it is not called, so ``fn = os.system`` and
+    ``getattr(os, "system")`` are visible. The same line is recorded once.
+    """
     modules, functions = _bindings(tree)
+    annotations = _annotation_ids(tree)
     found: list[tuple[int, str]] = []
+    seen: set[tuple[int, str]] = set()
+
+    def add(lineno: int, label: str) -> None:
+        if (lineno, label) not in seen:
+            seen.add((lineno, label))
+            found.append((lineno, label))
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in _MODULES:
             if any(alias.name == "*" for alias in node.names):
-                found.append((node.lineno, f"{node.module}.*"))
+                add(node.lineno, f"{node.module}.*")
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and id(node) not in annotations
+        ):
+            module = modules.get(node.value.id)
+            if module and _is_launch(module, node.attr):
+                add(node.lineno, f"{module}.{node.attr}")
         if not isinstance(node, ast.Call):
             continue
         func = node.func
+        if (
+            isinstance(func, ast.Name)
+            and func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            module = modules.get(node.args[0].id)
+            if module and _is_launch(module, node.args[1].value):
+                add(node.lineno, f"{module}.{node.args[1].value}")
         if isinstance(func, ast.Name):
             pair = functions.get(func.id)
             if pair and (pair[1] == "*" or _is_launch(*pair)):
-                found.append((node.lineno, f"{pair[0]}.{pair[1]}"))
+                add(node.lineno, f"{pair[0]}.{pair[1]}")
         elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
             module = modules.get(func.value.id)
             if module and _is_launch(module, func.attr):
-                found.append((node.lineno, f"{module}.{func.attr}"))
+                add(node.lineno, f"{module}.{func.attr}")
     return found
 
 
@@ -103,6 +159,9 @@ def _span(tree: ast.AST, name: str) -> tuple[int, int]:
         ),
         ("import subprocess as sp\ndef f():\n    sp.run(['x'])\n", "subprocess.run"),
         ("from subprocess import *\n", "subprocess.*"),
+        ("import os\nfn = os.system\n", "os.system"),
+        ("import os\nfn = getattr(os, 'system')\n", "os.system"),
+        ("import os\nfn = getattr(os, 'popen')\n", "os.popen"),
     ],
 )
 def test_process_launch_forms_are_visible(source, label):
