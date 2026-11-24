@@ -189,6 +189,8 @@ It runs on every push through GitHub Actions.
   files are read whole, and the combined diff is then cut to 60,000 characters.
   The tracked diff is also read in full before that cut; it is not streamed.
   A Git command that runs longer than 60 seconds stops the review.
+  A descendant of that command that calls setsid leaves the process group
+  and can keep running after the review has returned.
 - A repository that already uses a split index can have its shared index
   timestamp refreshed by Git during the read. `core.splitIndex=false` does
   not stop that on Git 2.43.
