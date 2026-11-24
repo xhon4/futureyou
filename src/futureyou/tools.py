@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 from futureyou.report import binary_paths
 
@@ -138,6 +139,7 @@ def _git(
     repo: Path,
     *args: str,
     config: tuple[tuple[bytes, bytes], ...] = (),
+    options: tuple[str, ...] = (),
     binary: bool = False,
 ) -> subprocess.CompletedProcess:
     env = os.environb.copy()
@@ -147,7 +149,7 @@ def _git(
     for name in _REPO_LOCATING_ENV:
         env.pop(name.encode("ascii"), None)
     _append_config(env, config)
-    command = ["git", *_GIT_CONFIG, *args]
+    command = ["git", *_GIT_CONFIG, *options, *args]
     try:
         process = subprocess.Popen(
             command,
@@ -180,15 +182,54 @@ def _git(
 
 
 _FILTER_SUFFIXES = (b".clean", b".smudge", b".process", b".required")
+# GIT_CONFIG_COUNT arrived in Git 2.31. Older Git ignores it, so a driver
+# that cannot be expressed with -c would still run.
+_GIT_CONFIG_ENV_VERSION = (2, 31)
+_VERSION = re.compile(r"(\d+)\.(\d+)")
 
 
-def _filter_overrides(repo: Path) -> tuple[tuple[bytes, bytes], ...] | None:
+class _FilterBlock(NamedTuple):
+    options: tuple[str, ...]
+    pairs: tuple[tuple[bytes, bytes], ...]
+
+
+def _git_version(repo: Path) -> tuple[int, int] | None:
+    result = _git(repo, "version")
+    if result.returncode != 0:
+        return None
+    match = _VERSION.search(result.stdout or "")
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _dash_c_driver(name: bytes) -> str | None:
+    """Return the driver name when `git -c filter.<name>.<suffix>=` can say it.
+
+    `-c` splits on the first `=`, and the argument has to be text. A name
+    containing `=` or a non-UTF-8 byte is left for GIT_CONFIG_KEY_n.
+    """
+    if not name or b"=" in name or b"\n" in name or b"\r" in name or b"\0" in name:
+        return None
+    try:
+        return name.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _driver_label(name: bytes) -> str:
+    return name.decode("utf-8", errors="backslashreplace")
+
+
+def _filter_overrides(repo: Path) -> _FilterBlock | None:
     """Disable every configured clean/smudge filter for one read.
 
     An empty command is a no-op, so `git diff` hashes worktree bytes instead
     of running `filter.<name>.clean` (which is how Git LFS writes `.git/lfs`).
-    The driver name is the raw bytes between ``filter.`` and the last suffix,
-    so ``foo.bar``, ``foo=bar``, and a name containing ``0xff`` all match.
+    The driver name is the raw bytes between ``filter.`` and the last suffix.
+    Names that fit in `-c` are passed that way on every Git. Git 2.31 and
+    newer also receive the raw key in ``GIT_CONFIG_KEY_n``. On an older Git,
+    a name that `-c` cannot express aborts the review instead of running.
     """
     listed = _git(
         repo,
@@ -210,13 +251,43 @@ def _filter_overrides(repo: Path) -> tuple[tuple[bytes, bytes], ...] | None:
             if body.endswith(suffix) and len(body) > len(suffix):
                 names.add(body[: -len(suffix)])
                 break
-    pairs: list[tuple[bytes, bytes]] = []
+    if not names:
+        return _FilterBlock((), ())
+
+    flags: list[str] = []
+    blocked: list[bytes] = []
     for name in sorted(names):
-        prefix = b"filter." + name + b"."
-        for suffix in (b"clean", b"smudge", b"process"):
-            pairs.append((prefix + suffix, b""))
-        pairs.append((prefix + b"required", b"false"))
-    return tuple(pairs)
+        text = _dash_c_driver(name)
+        if text is None:
+            blocked.append(name)
+            continue
+        for suffix in ("clean", "smudge", "process"):
+            flags.extend(["-c", f"filter.{text}.{suffix}="])
+        flags.extend(["-c", f"filter.{text}.required=false"])
+
+    version = _git_version(repo)
+    if blocked and (version is None or version < _GIT_CONFIG_ENV_VERSION):
+        shown = ", ".join(_driver_label(name) for name in blocked)
+        if version is None:
+            message = (
+                f"could not determine the Git version, so filter driver {shown} "
+                "cannot be disabled; the review stopped"
+            )
+        else:
+            message = (
+                f"Git {version[0]}.{version[1]} cannot disable filter driver {shown}; "
+                "the review stopped so the filter would not rewrite the diff"
+            )
+        raise RepoError(message)
+
+    pairs: list[tuple[bytes, bytes]] = []
+    if version is not None and version >= _GIT_CONFIG_ENV_VERSION:
+        for name in sorted(names):
+            prefix = b"filter." + name + b"."
+            for suffix in (b"clean", b"smudge", b"process"):
+                pairs.append((prefix + suffix, b""))
+            pairs.append((prefix + b"required", b"false"))
+    return _FilterBlock(tuple(flags), tuple(pairs))
 
 
 def resolve_repo(path: Path) -> Path:
@@ -252,10 +323,23 @@ def git_diff(repo_root: Path) -> dict:
     if overrides is None:
         return {"status": "error", "message": "could not read Git filter configuration"}
 
-    staged = _git(repo_root, "diff", "--cached", *_DIFF_FLAGS, config=overrides)
+    staged = _git(
+        repo_root,
+        "diff",
+        "--cached",
+        *_DIFF_FLAGS,
+        config=overrides.pairs,
+        options=overrides.options,
+    )
     if staged.returncode != 0:
         return _git_error(staged)
-    unstaged = _git(repo_root, "diff", *_DIFF_FLAGS, config=overrides)
+    unstaged = _git(
+        repo_root,
+        "diff",
+        *_DIFF_FLAGS,
+        config=overrides.pairs,
+        options=overrides.options,
+    )
     if unstaged.returncode != 0:
         return _git_error(unstaged)
     tracked = staged.stdout + unstaged.stdout
@@ -266,7 +350,8 @@ def git_diff(repo_root: Path) -> dict:
         "--others",
         "--exclude-standard",
         "-z",
-        config=overrides,
+        config=overrides.pairs,
+        options=overrides.options,
         binary=True,
     )
     if listing.returncode != 0:
@@ -317,7 +402,8 @@ def git_diff(repo_root: Path) -> dict:
             "--",
             "/dev/null",
             name,
-            config=overrides,
+            config=overrides.pairs,
+            options=overrides.options,
         )
         if result.returncode not in (0, 1):
             return _git_error(result)
